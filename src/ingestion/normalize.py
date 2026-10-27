@@ -9,7 +9,7 @@ DATASET_NAME = "2WikiMultihopQA"
 
 
 def parse_json_field(value: Any) -> Any:
-    """Decode a JSON string when necessary."""
+    """Decode a JSON string if necessary."""
     if not isinstance(value, str):
         return value
 
@@ -27,29 +27,45 @@ def normalize_whitespace(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value)).strip()
 
 
-def content_to_text(content: Any) -> str:
-    """Convert a passage's content into one clean text string."""
-    if isinstance(content, (list, tuple)):
-        parts = [
-            normalize_whitespace(sentence)
-            for sentence in content
-            if sentence is not None
-        ]
-        return normalize_whitespace(" ".join(parts))
+def content_to_sentences(content: Any) -> list[str]:
+    """
+    Preserve original sentence boundaries when the dataset
+    supplies a list of sentences.
 
-    return normalize_whitespace(content)
+    If only a string is supplied, use a basic punctuation-based
+    fallback. Original boundaries are preferable.
+    """
+    if isinstance(content, (list, tuple)):
+        return [
+            normalized
+            for item in content
+            if (normalized := normalize_whitespace(item))
+        ]
+
+    text = normalize_whitespace(content)
+
+    if not text:
+        return []
+
+    return [
+        sentence
+        for item in re.split(r"(?<=[.!?])\s+", text)
+        if (sentence := normalize_whitespace(item))
+    ]
+
+
+def content_to_text(content: Any) -> str:
+    """Combine sentence text into one searchable passage."""
+    return normalize_whitespace(
+        " ".join(content_to_sentences(content))
+    )
 
 
 def supporting_indices_by_title(
     supporting_facts: Any,
 ) -> dict[str, list[int]]:
     """
-    Map each passage title to its supporting sentence indices.
-
-    Example:
-        [["Stuart Rosenberg", 0]]
-        becomes:
-        {"stuart rosenberg": [0]}
+    Map passage titles to their supporting sentence indices.
     """
     facts = parse_json_field(supporting_facts)
     indices: dict[str, set[int]] = {}
@@ -82,10 +98,10 @@ def example_to_documents(
     split: str = "train",
 ) -> list[dict[str, Any]]:
     """
-    Convert one QA example into individual source passage records.
+    Convert one QA example into independent source passage records.
 
-    Questions and expected answers are deliberately excluded
-    from these searchable source records.
+    The question and expected answer remain outside the source
+    records used for retrieval.
     """
     example_id = example.get("_id", example.get("id"))
 
@@ -93,7 +109,6 @@ def example_to_documents(
         raise ValueError("Dataset example is missing its ID.")
 
     example_id = normalize_whitespace(example_id)
-
     context = parse_json_field(example.get("context", []))
 
     if not isinstance(context, (list, tuple)):
@@ -125,16 +140,16 @@ def example_to_documents(
             )
 
         title = normalize_whitespace(title)
-        text = content_to_text(content)
+        sentences = content_to_sentences(content)
+        text = normalize_whitespace(" ".join(sentences))
 
-        if not title or not text:
+        if not title or not text or not sentences:
             raise ValueError(
-                f"Empty title or text in example {example_id}, "
-                f"passage index {passage_index}."
+                f"Empty title, text or sentences in example "
+                f"{example_id}, passage index {passage_index}."
             )
 
-        # Generate a deterministic ID from the passage's content.
-        # Identical title/text pairs receive the same ID across examples.
+        # Keep the identity rule stable across corpus rebuilds.
         identity = f"{title.casefold()}\n{text}"
 
         digest = hashlib.sha256(
@@ -148,6 +163,7 @@ def example_to_documents(
                 "document_id": document_id,
                 "title": title,
                 "text": text,
+                "sentences": sentences,
                 "metadata": {
                     "dataset": DATASET_NAME,
                     "split": split,
@@ -172,7 +188,7 @@ def example_to_documents(
 def example_to_evaluation_item(
     example: dict[str, Any],
 ) -> dict[str, Any]:
-    """Keep QA answers and evidence labels separate from source text."""
+    """Keep expected answers and evaluation labels separate."""
     example_id = example.get("_id", example.get("id"))
 
     if example_id is None:

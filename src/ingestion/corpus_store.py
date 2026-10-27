@@ -6,7 +6,7 @@ from typing import Any
 
 
 def canonical_json(value: Any) -> str:
-    """Serialize a value consistently for comparisons."""
+    """Serialize values consistently for storage and comparison."""
     return json.dumps(
         value,
         ensure_ascii=False,
@@ -15,12 +15,7 @@ def canonical_json(value: Any) -> str:
 
 
 class SQLiteCorpusStore:
-    """
-    Store unique source passages in SQLite.
-
-    SQLite provides disk-based storage and a primary key that
-    prevents duplicate document IDs.
-    """
+    """Disk-based store for unique passages and their provenance."""
 
     def __init__(self, database_path: Path | str):
         self.database_path = Path(database_path)
@@ -40,19 +35,37 @@ class SQLiteCorpusStore:
                 title TEXT NOT NULL,
                 text TEXT NOT NULL,
                 metadata_json TEXT NOT NULL,
+                sentences_json TEXT NOT NULL,
                 provenance_json TEXT NOT NULL
             )
             """
         )
 
+        # Support an older staging database that predates this field.
+        # The full corpus build creates a fresh database anyway.
+        columns = {
+            row[1]
+            for row in self.connection.execute(
+                "PRAGMA table_info(documents)"
+            )
+        }
+
+        if "sentences_json" not in columns:
+            self.connection.execute(
+                """
+                ALTER TABLE documents
+                ADD COLUMN sentences_json TEXT NOT NULL DEFAULT '[]'
+                """
+            )
+
         self.connection.commit()
 
     def add_document(self, document: dict[str, Any]) -> bool:
         """
-        Insert a new document or merge provenance into an existing one.
+        Insert a unique passage or merge additional provenance.
 
-        Returns True if a new unique document was inserted.
-        Returns False if the document ID already existed.
+        Returns True for a new document ID and False for an
+        existing ID.
         """
         document_id = document.get("document_id")
         title = document.get("title")
@@ -63,12 +76,13 @@ class SQLiteCorpusStore:
                 "A document must have an ID, title and text."
             )
 
+        sentences = document.get("sentences") or [text]
+
         metadata_json = canonical_json(
             document.get("metadata", {})
         )
-
+        sentences_json = canonical_json(sentences)
         incoming_provenance = document.get("provenance", [])
-        provenance_json = canonical_json(incoming_provenance)
 
         cursor = self.connection.execute(
             """
@@ -77,24 +91,24 @@ class SQLiteCorpusStore:
                 title,
                 text,
                 metadata_json,
+                sentences_json,
                 provenance_json
             )
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 document_id,
                 title,
                 text,
                 metadata_json,
-                provenance_json,
+                sentences_json,
+                canonical_json(incoming_provenance),
             ),
         )
 
-        # A new ID was inserted successfully.
         if cursor.rowcount == 1:
             return True
 
-        # The ID already exists. Merge any new provenance.
         row = self.connection.execute(
             """
             SELECT provenance_json
@@ -110,7 +124,6 @@ class SQLiteCorpusStore:
             )
 
         existing_provenance = json.loads(row[0])
-
         seen = {
             canonical_json(item)
             for item in existing_provenance
@@ -142,7 +155,6 @@ class SQLiteCorpusStore:
         return False
 
     def count_documents(self) -> int:
-        """Return the number of distinct stored document IDs."""
         row = self.connection.execute(
             "SELECT COUNT(*) FROM documents"
         ).fetchone()
@@ -150,11 +162,10 @@ class SQLiteCorpusStore:
         return int(row[0])
 
     def commit(self) -> None:
-        """Persist the current database transaction."""
         self.connection.commit()
 
     def export_jsonl(self, output_path: Path | str) -> None:
-        """Export unique source passages to JSON Lines format."""
+        """Export unique passages with sentences and provenance."""
         output_path = Path(output_path)
         output_path.parent.mkdir(
             parents=True,
@@ -170,6 +181,7 @@ class SQLiteCorpusStore:
                 title,
                 text,
                 metadata_json,
+                sentences_json,
                 provenance_json
             FROM documents
             ORDER BY document_id
@@ -182,6 +194,7 @@ class SQLiteCorpusStore:
                 title,
                 text,
                 metadata_json,
+                sentences_json,
                 provenance_json,
             ) in rows:
                 document = {
@@ -189,6 +202,7 @@ class SQLiteCorpusStore:
                     "title": title,
                     "text": text,
                     "metadata": json.loads(metadata_json),
+                    "sentences": json.loads(sentences_json),
                     "provenance": json.loads(provenance_json),
                 }
 
@@ -201,5 +215,4 @@ class SQLiteCorpusStore:
                 )
 
     def close(self) -> None:
-        """Close the database connection."""
         self.connection.close()

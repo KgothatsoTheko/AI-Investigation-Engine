@@ -39,11 +39,10 @@ def test_example_becomes_two_passages():
 
     assert len(documents) == 2
     assert documents[0]["title"] == "Director A"
-    assert (
-        documents[0]["text"]
-        == "Director A was born in 1940. "
-        "Director A directed Film A."
-    )
+    assert documents[0]["sentences"] == [
+    "Director A was born in 1940.",
+    "Director A directed Film A.",
+    ]
 
 
 def test_supporting_sentence_indices_are_preserved():
