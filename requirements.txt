@@ -1,3 +1,10 @@
+# requirements.txt
 streamlit
 pytest
 python-dotenv
+
+# Dataset processing — compatible versions tested on Windows 11 setup (If Windows blocks under Application Control policy)
+datasets==5.1.0
+numpy==2.2.6
+pandas==2.2.3
+pyarrow==24.0.0
