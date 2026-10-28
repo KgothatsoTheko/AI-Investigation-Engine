@@ -55,3 +55,26 @@ class TextEncoder:
         )
 
         return vectors[0]
+    
+    def encode_queries(
+        self,
+        queries: list[str],
+        batch_size: int = 32,
+    ):
+        """Encode several search queries efficiently."""
+        if not queries:
+            return []
+
+        if any(not query.strip() for query in queries):
+            raise ValueError(
+                "Queries cannot contain empty strings."
+            )
+
+        return self.model.encode(
+            queries,
+            batch_size=batch_size,
+            normalize_embeddings=True,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+        )
+
