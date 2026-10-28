@@ -1,5 +1,5 @@
 
-from src.retrieval.bm25 import BM25Index
+from src.retrieval.bm25 import BM25Index, tokenize
 
 
 def make_documents():
@@ -56,3 +56,18 @@ def test_bm25_rejects_invalid_limit():
         raise AssertionError(
             "Expected ValueError for top_k=0."
         )
+
+def test_tokenize_removes_stopwords_but_preserves_negation():
+    assert tokenize("Which films did Mario Bava direct?") == [
+        "films",
+        "mario",
+        "bava",
+        "direct",
+    ]
+
+    assert tokenize("The film is not directed by Mario.") == [
+        "film",
+        "not",
+        "directed",
+        "mario",
+    ]

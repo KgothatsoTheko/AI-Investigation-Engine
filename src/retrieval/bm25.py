@@ -5,13 +5,35 @@ from collections import Counter, defaultdict
 from typing import Any
 
 
+
 TOKEN_PATTERN = re.compile(r"\w+", flags=re.UNICODE)
+
+# Common English words that usually contribute little to retrieval.
+# Keep "no", "not" and "nor" because negation can change meaning.
+STOPWORDS = frozenset(
+    """
+    a an the and or but if then else
+    is am are was were be been being
+    do does did doing
+    has have had having
+    this that these those it its
+    i me my we our you your he she
+    they them their his her who whom whose
+    what which when where why how
+    of in on at to for from by with
+    as into about over under between
+    can could would should will may might
+    """.split()
+)
 
 
 def tokenize(text: str) -> list[str]:
-    """Convert text into lowercase word tokens."""
-    return TOKEN_PATTERN.findall(text.casefold())
-
+    """Convert text into lowercase tokens, excluding stopwords."""
+    return [
+        token
+        for token in TOKEN_PATTERN.findall(text.casefold())
+        if token not in STOPWORDS
+    ]
 
 class BM25Index:
     """
