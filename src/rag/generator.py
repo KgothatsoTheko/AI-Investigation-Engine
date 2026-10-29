@@ -154,6 +154,36 @@ RULES:
 9. Keep the answer clear and concise. Distinguish established
    facts from conclusions that remain uncertain.
 
+10. The direct_answer field must contain only the concise answer
+    needed for evaluation. For a yes/no question, begin it with
+    "Yes" or "No". For a comparison, clearly identify the selected
+    option. Do not put a long explanation in this field.
+
+11. The answer field should explain the conclusion and its
+    supporting evidence, with the findings providing the detailed
+    citation structure.
+
+12. The direct_answer field is a canonical, machine-evaluable answer.
+    It must be as short as possible.
+
+13. For a yes/no question, return exactly "Yes" or "No" when the
+    evidence establishes the answer. Do not add an explanation.
+
+14. For a person, film, place, date, country, nationality, or cause,
+    return only the requested name, value, or short phrase.
+
+15. Do not use full sentences in direct_answer. Do not repeat the
+    question or write phrases such as "The answer is" or
+    "The evidence indicates".
+
+16. If the answer cannot be established, return exactly
+    "Insufficient evidence" in direct_answer. Explain what is
+    missing in the answer and limitations fields instead.
+
+17. Keep the detailed explanation and supporting findings in
+    their respective fields. Never sacrifice factual accuracy
+    merely to match the reference answer.
+    
 Return a structured response matching the required schema.
 """.strip()
 
@@ -169,6 +199,7 @@ Return a structured response matching the required schema.
         if not evidence_chunks:
             return InvestigationAnswer(
                 status="insufficient_evidence",
+                direct_answer="Insufficient evidence",
                 answer=(
                     "I could not find any evidence to answer "
                     "this question."

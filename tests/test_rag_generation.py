@@ -29,6 +29,7 @@ def sample_evidence():
 def test_known_citations_are_accepted():
     answer = InvestigationAnswer(
         status="answered",
+        direct_answer="Director B",
         answer="Director B was younger.",
         findings=[
             CitedFinding(
@@ -54,6 +55,7 @@ def test_known_citations_are_accepted():
 def test_unknown_citation_is_rejected():
     answer = InvestigationAnswer(
         status="answered",
+        direct_answer="The answer is supported by evidence.",
         answer="The answer is supported by evidence.",
         findings=[
             CitedFinding(
@@ -76,6 +78,7 @@ def test_unknown_citation_is_rejected():
 def test_answered_status_requires_cited_findings():
     answer = InvestigationAnswer(
         status="answered",
+        direct_answer="An answer without supporting findings.",
         answer="An answer without supporting findings.",
         findings=[],
     )
@@ -93,6 +96,7 @@ def test_answered_status_requires_cited_findings():
 def test_insufficient_evidence_can_have_no_findings():
     answer = InvestigationAnswer(
         status="insufficient_evidence",
+        direct_answer="There is not enough information.",
         answer="There is not enough information.",
         findings=[],
         limitations=["The required fact was not found."],

@@ -294,9 +294,8 @@ the final user-facing answer here.
             # The SDK executes the supplied Python tool when
             # Gemini requests it, then sends the result back
             # to the model. Further tool calls can follow.
-            self.planner_client.models.generate_content(
+            chat = self.planner_client.chats.create(
                 model=self.model_name,
-                contents=planner_prompt,
                 config=types.GenerateContentConfig(
                     temperature=0,
                     tools=[search_evidence],
@@ -309,6 +308,8 @@ the final user-facing answer here.
                     ),
                 ),
             )
+
+            chat.send_message(planner_prompt)
 
             # Defensive fallback: even if the planner doesn't call
             # its tool, the system attempts one actual retrieval.

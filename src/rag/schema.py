@@ -24,6 +24,7 @@ class CitedFinding(BaseModel):
     )
 
 
+
 class InvestigationAnswer(BaseModel):
     """Structured result of an evidence-based investigation."""
 
@@ -33,10 +34,21 @@ class InvestigationAnswer(BaseModel):
         "conflicting_evidence",
     ]
 
+    direct_answer: str = Field(
+        description=(
+            "A concise, direct answer to the user's question. "
+            "For yes/no questions, start with Yes or No. "
+            "For comparisons, name the winning option and state "
+            "the comparison result. For insufficient evidence, "
+            "state that the answer cannot be established."
+        ),
+        min_length=1,
+    )
+
     answer: str = Field(
         description=(
-            "A concise answer based only on the supplied evidence. "
-            "Explain uncertainty when necessary."
+            "A clear explanation of the answer, grounded in "
+            "the supplied evidence."
         ),
         min_length=1,
     )
@@ -44,8 +56,7 @@ class InvestigationAnswer(BaseModel):
     findings: list[CitedFinding] = Field(
         default_factory=list,
         description=(
-            "Supported factual findings, each accompanied by "
-            "the source chunk IDs that support it."
+            "Factual findings with exact source chunk IDs."
         ),
     )
 
