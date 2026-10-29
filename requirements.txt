@@ -14,3 +14,7 @@ qdrant-client
 
 google-genai
 pydantic
+
+pypdf
+python-docx
+reportlab
