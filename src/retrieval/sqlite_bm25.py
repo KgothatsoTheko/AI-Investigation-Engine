@@ -308,3 +308,105 @@ class SQLiteBM25Index:
 
     def close(self) -> None:
         self.connection.close()
+
+    def delete_documents_by_document_id(
+        self,
+        document_id: str,
+    ) -> int:
+        """
+        Delete all indexed chunks belonging to one source document.
+
+        Rebuild term document frequencies after deletion so BM25
+        scoring remains consistent.
+        """
+        if not document_id:
+            raise ValueError("document_id cannot be empty.")
+
+        rows = self.connection.execute(
+            """
+            SELECT chunk_id, payload_json
+            FROM documents
+            """
+        ).fetchall()
+
+        chunk_ids = []
+
+        for chunk_id, payload_json in rows:
+            payload = json.loads(payload_json)
+
+            if payload.get("document_id") == document_id:
+                chunk_ids.append(chunk_id)
+
+        if not chunk_ids:
+            return 0
+
+        with self.connection:
+            for chunk_id in chunk_ids:
+                self.connection.execute(
+                    "DELETE FROM postings WHERE chunk_id = ?",
+                    (chunk_id,),
+                )
+                self.connection.execute(
+                    "DELETE FROM documents WHERE chunk_id = ?",
+                    (chunk_id,),
+                )
+
+            # Rebuild document frequencies from remaining postings.
+            self.connection.execute("DELETE FROM terms")
+
+            self.connection.execute(
+                """
+                INSERT INTO terms (term, document_frequency)
+                SELECT term, COUNT(*)
+                FROM postings
+                GROUP BY term
+                """
+            )
+
+        return len(chunk_ids)
+
+    def replace_document_chunks(
+        self,
+        document_id: str,
+        documents: list[dict[str, Any]],
+    ) -> dict[str, int]:
+        """
+        Replace all indexed chunks for a source document.
+
+        Every replacement chunk must belong to document_id.
+        """
+        if not document_id:
+            raise ValueError("document_id cannot be empty.")
+
+        seen_chunk_ids = set()
+
+        for document in documents:
+            if document.get("document_id") != document_id:
+                raise ValueError(
+                    "Every replacement chunk must belong to "
+                    f"document {document_id}."
+                )
+
+            chunk_id = document.get("chunk_id")
+
+            if not chunk_id:
+                raise ValueError(
+                    "Every chunk must have a chunk_id."
+                )
+
+            if chunk_id in seen_chunk_ids:
+                raise ValueError(
+                    f"Duplicate chunk ID: {chunk_id}"
+                )
+
+            seen_chunk_ids.add(chunk_id)
+
+        removed = self.delete_documents_by_document_id(document_id)
+
+        if documents:
+            self.add_documents(documents)
+
+        return {
+            "removed_chunks": removed,
+            "added_chunks": len(documents),
+        }

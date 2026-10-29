@@ -121,3 +121,117 @@ class QdrantVectorStore:
     def close(self) -> None:
         """Release the database client."""
         self.client.close()
+
+    def has_collection(self) -> bool:
+            """Check whether the configured collection exists."""
+            return self.client.collection_exists(
+                collection_name=self.collection_name
+            )
+
+    def ensure_collection(self, vector_size: int) -> None:
+        """
+        Create the collection if missing.
+
+        Existing collections are preserved. Their vector dimensions
+        must match the requested embedding dimension.
+        """
+        if vector_size <= 0:
+            raise ValueError("vector_size must be positive.")
+
+        if not self.has_collection():
+            self.client.create_collection(
+                collection_name=self.collection_name,
+                vectors_config=models.VectorParams(
+                    size=vector_size,
+                    distance=models.Distance.COSINE,
+                ),
+            )
+            return
+
+        info = self.client.get_collection(
+            collection_name=self.collection_name
+        )
+
+        existing_vectors = info.config.params.vectors
+        existing_size = getattr(existing_vectors, "size", None)
+
+        if existing_size is None:
+            raise ValueError(
+                "The existing collection uses an unsupported "
+                "or named-vector configuration."
+            )
+
+        if existing_size != vector_size:
+            raise ValueError(
+                f"Vector dimension mismatch: collection uses "
+                f"{existing_size}, requested {vector_size}."
+            )
+
+    def delete_document_except_chunks(
+        self,
+        document_id: str,
+        keep_chunk_ids: set[str],
+    ) -> int:
+        """
+        Delete obsolete vectors belonging to a document.
+
+        Chunks listed in keep_chunk_ids are preserved. This method
+        is intended to run after the replacement chunks are upserted.
+        """
+        if not document_id:
+            raise ValueError("document_id cannot be empty.")
+
+        if not self.has_collection():
+            return 0
+
+        scroll_filter = models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="document_id",
+                    match=models.MatchValue(value=document_id),
+                )
+            ]
+        )
+
+        offset = None
+        point_ids_to_delete = []
+
+        while True:
+            points, next_offset = self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=scroll_filter,
+                limit=256,
+                with_payload=True,
+                with_vectors=False,
+                offset=offset,
+            )
+
+            for point in points:
+                payload = point.payload or {}
+                chunk_id = payload.get("chunk_id")
+
+                if chunk_id not in keep_chunk_ids:
+                    point_ids_to_delete.append(point.id)
+
+            if next_offset is None:
+                break
+
+            offset = next_offset
+
+        if point_ids_to_delete:
+            self.client.delete(
+                collection_name=self.collection_name,
+                points_selector=models.PointIdsList(
+                    points=point_ids_to_delete
+                ),
+                wait=True,
+            )
+
+        return len(point_ids_to_delete)
+
+    def delete_document(self, document_id: str) -> int:
+        """Delete all vectors belonging to one document."""
+        return self.delete_document_except_chunks(
+            document_id=document_id,
+            keep_chunk_ids=set(),
+        )
