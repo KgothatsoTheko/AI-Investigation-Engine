@@ -25,6 +25,7 @@ def render_document_upload() -> None:
         "Choose a document",
         type=["txt", "pdf", "docx"],
         accept_multiple_files=False,
+        max_upload_size=25,
         key="document_upload",
     )
 
