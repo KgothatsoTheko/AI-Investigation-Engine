@@ -144,7 +144,7 @@ The purpose of these tests is to evaluate not only whether the system produces a
 ### 1. Clone the Repository
 
 ```bash
-git clone <YOUR_GITHUB_REPOSITORY_URL>
+git clone https://github.com/KgothatsoTheko/AI-Investigation-Engine
 cd AI-Investigation-Engine
 ```
 
