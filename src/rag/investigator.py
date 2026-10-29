@@ -95,6 +95,7 @@ class MultiStepInvestigator:
         self,
         data_dir: Path | str,
         max_search_calls: int = MAX_SEARCH_CALLS,
+        encoder: Any | None = None,
     ):
         if not 1 <= max_search_calls <= MAX_SEARCH_CALLS:
             raise ValueError(
@@ -129,6 +130,7 @@ class MultiStepInvestigator:
             data_dir=data_dir,
             candidate_limit=25,
             final_limit=RESULTS_PER_SEARCH,
+            encoder=encoder,
         )
 
         # Keep final answer generation and citation validation

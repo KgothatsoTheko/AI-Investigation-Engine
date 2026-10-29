@@ -22,6 +22,7 @@ class HybridEvidenceRetriever:
         data_dir: Path | str,
         candidate_limit: int = 25,
         final_limit: int = 12,
+        encoder: TextEncoder | None = None,
     ):
         if candidate_limit <= 0 or final_limit <= 0:
             raise ValueError("Search limits must be positive.")
@@ -44,7 +45,7 @@ class HybridEvidenceRetriever:
         self.candidate_limit = candidate_limit
         self.final_limit = final_limit
 
-        self.encoder = TextEncoder()
+        self.encoder = encoder if encoder is not None else TextEncoder()
 
         self.keyword_index = SQLiteBM25Index(
             keyword_path
