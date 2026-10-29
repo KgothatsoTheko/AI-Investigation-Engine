@@ -1,72 +1,61 @@
 # AI Usage Report — AI Investigation Engine
 
-## 1. Purpose of This Report
+**Report date:** 29 October 2026
 
-This report explains how AI tools were used during the design, implementation, debugging, testing, and documentation of the AI Investigation Engine. AI assistance was used as a development aid; the project still required local implementation, review, testing, and technical decisions by the developer.
+## 1. Purpose of AI use
 
-## 2. AI Tools and Models Used
+AI tools were used as development assistance during the implementation and debugging of the AI Investigation Engine. The project remains a software system whose behavior is determined by the checked-in Python code, retrieval/indexing components, configured embedding model, data, and Gemini API calls—not by this report.
 
-### ChatGPT (OpenAI)
+## 2. AI-assisted development
 
-ChatGPT was used as a software-development assistant during the project. Assistance included discussing the system architecture, proposing implementation approaches, explaining errors, suggesting code changes, drafting test cases, interpreting test output, and preparing project documentation.
+ChatGPT was used to assist with:
+- breaking the assignment requirements into implementation tasks;
+- discussing the ingestion, chunking, indexing, hybrid retrieval, RAG, evaluation, and Streamlit UI architecture;
+- drafting and revising Python implementations and tests;
+- interpreting terminal output, debugging failures, and suggesting targeted corrections;
+- explaining evaluation metrics and helping structure the evaluation and usage documentation.
 
-Examples of work for which ChatGPT provided assistance:
+The developer ran the project locally, supplied code and execution output for troubleshooting, integrated changes, and ran the test suite.
 
-- Structuring the document-ingestion, indexing, retrieval, and answer-generation workflow.
-- Working through hybrid retrieval using semantic search, keyword search, and reciprocal rank fusion.
-- Debugging Python environment and dependency issues, syntax/indentation errors, and test-collection failures.
-- Investigating why retrieval results appeared as empty source passages in the Single-pass RAG interface and suggesting that the UI pass the underlying chunk dictionaries to the answer generator.
-- Improving the usability and organisation of the Streamlit interface.
-- Drafting the README, Evaluation Report, and this AI Usage Report.
+## 3. AI use inside the application
 
-The suggestions were based on code, logs, and outputs shared during development. They were not a substitute for running the application and verifying the changes locally.
+The application uses the following AI/ML components:
 
-### Google Gemini API
+| Component | Role |
+|---|---|
+| Sentence Transformers `all-MiniLM-L6-v2` | Produces vector embeddings for indexed text and user queries. |
+| Gemini API | Generates structured, evidence-grounded answers and supports the planner/tool-calling flow for multi-step investigations. |
+| Hybrid retriever | Combines semantic search and SQLite BM25 keyword search with Reciprocal Rank Fusion; ranking and fusion logic are implemented in application code. |
 
-The application integrates the Google Gemini API for LLM-based answer generation. The multi-step investigation mode also uses a model-driven tool-calling workflow to request targeted searches against the local retrieval system before generating a final answer.
+Gemini receives the user's question and retrieved evidence passages as context for answer generation. Users should only upload documents they are authorized to process and share with the configured API provider. The Gemini key is configured outside source control through environment/secrets settings; secrets should never be committed to the repository.
 
-Gemini was therefore part of the implemented application's runtime, rather than only a tool used to write the code. API quota and rate-limit errors affected an attempted batch answer-evaluation run; that run did not produce a complete 40-question evaluation result.
+## 4. Human review and verification
 
-### Sentence Transformers
+Verification has included:
+- implementing and running automated unit/integration tests;
+- reviewing the retrieved passages and citations in the UI;
+- running the answer-evaluation pipeline against 40 questions;
+- checking syntax with `python -m py_compile`;
+- running `python -m pytest -q`, which completed with **66 passed** after an indentation issue was corrected.
 
-The project uses the pretrained `sentence-transformers/all-MiniLM-L6-v2` embedding model to convert text into vectors for semantic search. The generated vectors are stored and searched using Qdrant. This is a model component of the application, not evidence that the application's generated answers are automatically correct.
+The 66-test result is evidence that the tested local code passed the available automated suite at that point. It does not by itself establish that the currently deployed cloud app has been tested end-to-end or that every assignment requirement has been met.
 
-## 3. How AI Assistance Was Applied
+## 5. Known AI-assisted error and response
 
-AI assistance was used iteratively across several areas:
+During code iteration, an assistant-provided update placed the `retrieve()` and `close()` method definitions at the wrong indentation level. Python compilation and pytest collection exposed the error. The file was corrected, then `py_compile` and the full test suite passed locally.
 
-1. **Architecture and technical reasoning:** Discussing the roles of document processing, chunking, embeddings, vector search, keyword retrieval, evidence selection, and LLM generation.
-2. **Implementation support:** Drafting and refining Python snippets and application logic based on the project's existing modules and requirements.
-3. **Debugging:** Interpreting tracebacks and test failures, identifying likely causes, and proposing targeted fixes for the local codebase.
-4. **Testing:** Helping interpret Pytest results and propose checks for indexing, re-indexing, deletion, retrieval, and answer selection.
-5. **User interface:** Suggesting clearer workflow steps for uploading documents, saving them, indexing them, running investigations, and reviewing evidence.
-6. **Documentation:** Preparing written explanations of the architecture, setup instructions, observed test results, limitations, and use of AI tools.
+This demonstrates why generated suggestions were checked with executable validation rather than accepted without review.
 
-## 4. Developer Contribution and Responsibility
+## 6. Evaluation-related caveats
 
-The developer defined the project goal, supplied the task requirements and relevant source code, ran commands in the local Windows environment, inspected application output, and used test results to guide the next changes. The developer installed dependencies, ran the Streamlit application, indexed the assignment PDF, ran the automated test suite, and checked the evidence returned by the application.
+- Gemini API quota/rate-limit errors occurred during the single-pass versus multi-step comparison. The saved comparison run contains three error records, so it is not valid to claim that one mode performed better based on that run.
+- The 40-question answer evaluation used a primary model and a fallback model. Its aggregate results are not a controlled comparison of those models.
+- Citation-ID validation confirms that citations refer to provided evidence IDs, but it does not independently prove semantic entailment.
 
-The local test run recorded on 29 October 2026 completed with **64 tests passed**. The uploaded assignment PDF was also extracted and indexed into 15 chunks, with 15 vectors and 15 keyword entries recorded. These are observed verification results; they do not establish that every generated answer is correct.
+## 7. Responsible use and limitations
 
-ChatGPT did not independently verify the full local repository, deploy the application, or confirm the behaviour of an unshared live environment. Code suggestions needed to be applied and tested in the project environment. The developer remains responsible for the submitted code, design decisions, security, reliability, and ability to explain and modify the implementation.
+AI assistance can produce incorrect code, misleading explanations, or evaluation conclusions that exceed the evidence. Human review, tests, trace inspection, and explicit recording of failed API runs were used to reduce these risks. Remaining limits—especially cloud corpus availability, persistence, and the incomplete answer-level configuration comparison—should not be represented as solved.
 
-## 5. Review and Validation of AI-Generated Suggestions
+## 8. Disclosure statement
 
-AI-generated code and explanations can contain errors, omit project-specific details, or make assumptions about surrounding code. For that reason, development relied on reviewing the available code and running local commands and tests rather than treating each suggestion as automatically correct.
-
-One example was the Single-pass RAG source-display issue. The retrieval function returned wrapper objects containing the actual chunk under a `chunk` key, while the UI and generator expected the chunk fields at the top level. After the UI was adjusted to pass the underlying non-empty chunk dictionaries, the result displayed actual source text and identifiers rather than empty passages.
-
-The project also encountered Gemini API quota/rate-limit responses during the batch answer-evaluation attempt. The incomplete run was not reported as a completed evaluation or used to claim a measured overall answer-accuracy score.
-
-## 6. Limitations and Responsible Use
-
-- AI-assisted code must be reviewed and tested before use.
-- LLM-generated answers may be incorrect or unsupported, even when they sound plausible.
-- Retrieved source passages and citation identifiers must be checked against the claims they are intended to support.
-- An incomplete evaluation run must not be presented as a completed benchmark.
-- API keys and other secrets must be kept out of source control.
-- The developer remains accountable for the code and must be able to explain the design, retrieval flow, test results, and limitations independently.
-
-## 7. Summary
-
-ChatGPT supported the development process through architecture discussions, code suggestions, debugging, test interpretation, UI improvement, and documentation. Google Gemini powers the application's LLM-based answer generation and multi-step tool-calling workflow, while Sentence Transformers supplies embeddings for semantic retrieval. The developer applied and tested changes locally and remains responsible for the final implementation. The recorded software test suite passed 64 tests, but the broader quantitative evaluation of generated answers remains incomplete because of Gemini API quota/rate-limit issues.
+This report describes AI-assisted implementation, debugging, and application inference based on the development record available for this project. Before submission, the developer should confirm that this wording accurately reflects their use of tools and adjust it to match any specific disclosure format required by the course or organization.
