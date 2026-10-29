@@ -143,6 +143,40 @@ class UploadIndexer:
             "vectors_removed": removed_vectors,
         }
 
+    def delete_saved_document(
+        self,
+        document_id: str,
+    ) -> dict[str, Any]:
+        """
+        Remove a saved document and its indexed chunks.
+
+        Indexed content is removed first. If that operation fails,
+        the saved original is retained.
+        """
+        document = self.document_store.get_document(document_id)
+
+        if document is None:
+            raise KeyError(
+                f"Saved document not found: {document_id}"
+            )
+
+        # Remove the document's keyword and vector entries first.
+        index_result = self.delete_indexed_document(document_id)
+
+        # Only remove the original after index cleanup succeeds.
+        deleted = self.document_store.delete_document(document_id)
+
+        if not deleted:
+            raise RuntimeError(
+                f"Could not delete saved document: {document_id}"
+            )
+
+        return {
+            **index_result,
+            "title": document["title"],
+            "saved_document_deleted": True,
+        }
+    
     def index_all_documents(self) -> list[dict[str, Any]]:
         """Index all documents currently in the saved library."""
 

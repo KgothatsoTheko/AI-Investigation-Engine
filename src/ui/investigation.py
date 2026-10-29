@@ -109,7 +109,7 @@ def _render_investigation_result(result: dict) -> None:
         with st.expander("Investigation search trace"):
             st.dataframe(
                 search_log,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 

@@ -145,6 +145,14 @@ def render_document_upload() -> None:
     st.divider()
     st.subheader("Saved document library")
 
+    delete_message = st.session_state.pop(
+    "document_delete_message",
+    None,
+    )
+
+    if delete_message:
+        st.success(delete_message)
+
     saved_documents = store.list_documents()
 
     if not saved_documents:
@@ -184,16 +192,38 @@ def render_document_upload() -> None:
                 key=f"confirm_delete_{selected_id}",
             ):
                 if st.button(
-                    "Delete saved document",
+                    "Delete saved document and its search index",
                     key=f"delete_document_{selected_id}",
                 ):
-                    if store.delete_document(selected_id):
-                        st.success("Document deleted from the library.")
-                        st.rerun()
-                    else:
-                        st.warning("The document no longer exists.")
+                    indexer = None
+                    delete_message = None
 
-                    st.divider()
+                    try:
+                        indexer = UploadIndexer(document_store=store)
+
+                        result = indexer.delete_saved_document(selected_id)
+
+                        delete_message = (
+                            f"Deleted '{result['title']}'. "
+                            f"Removed {result['keyword_chunks_removed']} "
+                            f"keyword chunks and "
+                            f"{result['vectors_removed']} vectors."
+                        )
+
+                    except Exception as exc:
+                        st.error(
+                            f"Deletion failed: {type(exc).__name__}: {exc}"
+                        )
+
+                    finally:
+                        if indexer is not None:
+                            indexer.close()
+
+                    if delete_message:
+                        st.session_state["document_delete_message"] = (
+                            delete_message
+                        )
+                        st.rerun()
 
             st.subheader("Search indexing")
 

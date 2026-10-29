@@ -227,3 +227,51 @@ def test_indexing_missing_saved_document_raises_error(
 
     with pytest.raises(KeyError, match="Saved document not found"):
         indexer.index_document("does_not_exist")
+
+def test_deleting_saved_document_removes_it_from_all_stores(
+    indexing_environment,
+):
+    store, indexer = indexing_environment
+
+    document = make_document(
+        "upload_delete_test",
+        "The uniqueamberphrase belongs to this document.",
+    )
+
+    store.save_document(document)
+    indexer.index_document("upload_delete_test")
+
+    result = indexer.delete_saved_document("upload_delete_test")
+
+    assert result["saved_document_deleted"] is True
+    assert store.get_document("upload_delete_test") is None
+
+    assert indexer.keyword_index.count_documents() == 0
+    assert indexer.vector_store.count_points() == 0
+
+    assert indexer.keyword_index.search(
+        "uniqueamberphrase",
+        top_k=5,
+    ) == []
+
+
+def test_deleting_unindexed_saved_document_is_supported(
+    indexing_environment,
+):
+    store, indexer = indexing_environment
+
+    store.save_document(
+        make_document(
+            "upload_unindexed_test",
+            "This document has not been indexed yet.",
+        )
+    )
+
+    result = indexer.delete_saved_document(
+        "upload_unindexed_test"
+    )
+
+    assert result["saved_document_deleted"] is True
+    assert result["keyword_chunks_removed"] == 0
+    assert result["vectors_removed"] == 0
+    assert store.get_document("upload_unindexed_test") is None
