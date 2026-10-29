@@ -311,7 +311,7 @@ Retrieval quality, source coverage, answer correctness, and contradiction handli
 
 ## Deployment
 
-**Live Demo:** Add the public deployment URL here once deployment is available.
+**Live Demo:** [Add the public deployment URL here once deployment is available.](https://ai-investigation-engine.streamlit.app/)
 
 ---
 
