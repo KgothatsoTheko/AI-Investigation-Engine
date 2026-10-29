@@ -83,3 +83,96 @@ def reciprocal_rank_fusion(
             result["chunk_id"],
         ),
     )[:limit]
+
+def reciprocal_rank_fusion_multiple(
+    ranked_lists: list[
+        tuple[str, str, list[dict[str, Any]], float]
+    ],
+    limit: int = 5,
+    rrf_k: int = 60,
+) -> list[dict[str, Any]]:
+    """
+    Fuse multiple ranked lists using Reciprocal Rank Fusion.
+
+    Each list entry contains:
+        (source_name, modality, results, weight)
+
+    modality must be "semantic" or "keyword".
+
+    Raw scores are not compared across different indexes.
+    """
+    if limit <= 0:
+        raise ValueError("limit must be positive.")
+
+    if rrf_k <= 0:
+        raise ValueError("rrf_k must be positive.")
+
+    fused: dict[str, dict[str, Any]] = {}
+
+    for source_name, modality, results, weight in ranked_lists:
+        if modality not in {"semantic", "keyword"}:
+            raise ValueError(
+                f"Unsupported retrieval modality: {modality}"
+            )
+
+        if weight < 0:
+            raise ValueError("Weights cannot be negative.")
+
+        for rank, result in enumerate(results, start=1):
+            chunk = result.get("chunk", {})
+            chunk_id = (
+                result.get("chunk_id")
+                or chunk.get("chunk_id")
+            )
+
+            if not chunk_id:
+                raise ValueError(
+                    f"{source_name} result has no chunk_id."
+                )
+
+            if chunk_id not in fused:
+                fused[chunk_id] = {
+                    "chunk_id": chunk_id,
+                    "chunk": chunk,
+                    "hybrid_score": 0.0,
+                    "semantic_rank": None,
+                    "keyword_rank": None,
+                    "semantic_score": None,
+                    "keyword_score": None,
+                    "matched_terms": [],
+                    "source_ranks": {},
+                    "rank_contributions": {},
+                }
+
+            item = fused[chunk_id]
+            contribution = weight / (rrf_k + rank)
+
+            item["hybrid_score"] += contribution
+            item["source_ranks"][source_name] = rank
+            item["rank_contributions"][source_name] = contribution
+
+            if modality == "semantic":
+                current_rank = item["semantic_rank"]
+
+                if current_rank is None or rank < current_rank:
+                    item["semantic_rank"] = rank
+                    item["semantic_score"] = result.get("score")
+
+            else:
+                current_rank = item["keyword_rank"]
+
+                if current_rank is None or rank < current_rank:
+                    item["keyword_rank"] = rank
+                    item["keyword_score"] = result.get("score")
+
+                for term in result.get("matched_terms", []):
+                    if term not in item["matched_terms"]:
+                        item["matched_terms"].append(term)
+
+    return sorted(
+        fused.values(),
+        key=lambda item: (
+            -item["hybrid_score"],
+            item["chunk_id"],
+        ),
+    )[:limit]

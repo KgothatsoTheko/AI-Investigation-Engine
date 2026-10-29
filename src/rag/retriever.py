@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from src.embeddings.encoder import TextEncoder
-from src.retrieval.hybrid_search import reciprocal_rank_fusion
+from src.retrieval.hybrid_search import (reciprocal_rank_fusion_multiple)
 from src.retrieval.sqlite_bm25 import SQLiteBM25Index
 from src.storage.vector_store import QdrantVectorStore
 
@@ -55,78 +55,168 @@ class HybridEvidenceRetriever:
             collection_name="investigation_chunks",
         )
 
+        # Uploaded-document indexes are optional.
+        # The original full-corpus indexes remain unchanged.
+        upload_keyword_path = (
+            data_dir / "upload_keyword_index.sqlite"
+        )
+        upload_vector_path = data_dir / "qdrant_uploads"
+
+        self.upload_keyword_index = None
+        self.upload_vector_store = None
+
+        if upload_keyword_path.exists():
+            self.upload_keyword_index = SQLiteBM25Index(
+                upload_keyword_path
+            )
+
+        if upload_vector_path.exists():
+            self.upload_vector_store = QdrantVectorStore(
+                database_path=upload_vector_path,
+                collection_name="uploaded_chunks",
+            )
+
     def retrieve(
-        self,
-        question: str,
-    ) -> list[dict[str, Any]]:
-        """Return diversified, fused search results."""
-        if not question.strip():
-            raise ValueError("The question cannot be empty.")
+            self,
+            question: str,
+        ) -> list[dict[str, Any]]:
+            """Retrieve and fuse evidence from the main and upload indexes."""
+            if not question.strip():
+                raise ValueError("The question cannot be empty.")
 
-        keyword_results = self.keyword_index.search(
-            question,
-            top_k=self.candidate_limit,
-        )
+            # 1. Search the main keyword index.
+            main_keyword_results = self.keyword_index.search(
+                question,
+                top_k=self.candidate_limit,
+            )
 
-        query_vector = self.encoder.encode_query(question)
+            # 2. Search the main semantic index.
+            query_vector = self.encoder.encode_query(question)
 
-        vector_points = self.vector_store.search(
-            query_vector,
-            limit=self.candidate_limit,
-        )
+            main_vector_points = self.vector_store.search(
+                query_vector,
+                limit=self.candidate_limit,
+            )
 
-        semantic_results = []
-
-        for point in vector_points:
-            payload = point.payload or {}
-
-            semantic_results.append(
+            main_semantic_results = [
                 {
-                    "chunk_id": payload.get("chunk_id"),
-                    "chunk": payload,
+                    "chunk_id": (point.payload or {}).get("chunk_id"),
+                    "chunk": point.payload or {},
                     "score": float(point.score),
                 }
+                for point in main_vector_points
+            ]
+
+            # The four lists will be fused into one ranking.
+            ranked_lists = [
+                (
+                    "main_semantic",
+                    "semantic",
+                    main_semantic_results,
+                    1.0,
+                ),
+                (
+                    "main_keyword",
+                    "keyword",
+                    main_keyword_results,
+                    1.0,
+                ),
+            ]
+
+            # 3. Search the uploaded-document keyword index if available.
+            if self.upload_keyword_index is not None:
+                upload_keyword_results = (
+                    self.upload_keyword_index.search(
+                        question,
+                        top_k=self.candidate_limit,
+                    )
+                )
+
+                ranked_lists.append(
+                    (
+                        "upload_keyword",
+                        "keyword",
+                        upload_keyword_results,
+                        1.0,
+                    )
+                )
+
+            # 4. Search the uploaded-document vector index if its
+            # collection exists. An empty upload index is valid.
+            if (
+                self.upload_vector_store is not None
+                and self.upload_vector_store.has_collection()
+            ):
+                upload_vector_points = self.upload_vector_store.search(
+                    query_vector,
+                    limit=self.candidate_limit,
+                )
+
+                upload_semantic_results = [
+                    {
+                        "chunk_id": (point.payload or {}).get("chunk_id"),
+                        "chunk": point.payload or {},
+                        "score": float(point.score),
+                    }
+                    for point in upload_vector_points
+                ]
+
+                ranked_lists.append(
+                    (
+                        "upload_semantic",
+                        "semantic",
+                        upload_semantic_results,
+                        1.0,
+                    )
+                )
+
+            # 5. Fuse rankings across all available indexes.
+            fused_results = reciprocal_rank_fusion_multiple(
+                ranked_lists=ranked_lists,
+                limit=self.candidate_limit,
             )
 
-        fused_results = reciprocal_rank_fusion(
-            semantic_results=semantic_results,
-            keyword_results=keyword_results,
-            limit=self.candidate_limit,
-        )
+            # 6. Deduplicate repeated evidence.
+            selected = []
+            seen_content = set()
 
-        # Avoid giving the generator several differently formatted
-        # copies of the same title and passage.
-        selected = []
-        seen_content = set()
+            for result in fused_results:
+                chunk = result.get("chunk", {})
 
-        for result in fused_results:
-            chunk = result.get("chunk", {})
+                title_key = normalize_evidence_text(
+                    chunk.get("title", "")
+                )
 
-            title_key = normalize_evidence_text(
-                chunk.get("title", "")
-            )
+                text_key = normalize_evidence_text(
+                    chunk.get("text", "")
+                )
 
-            text_key = normalize_evidence_text(
-                chunk.get("text", "")
-            )
+                if not text_key:
+                    continue
 
-            if not text_key:
-                continue
+                identity = (title_key, text_key)
 
-            identity = (title_key, text_key)
+                if identity in seen_content:
+                    continue
 
-            if identity in seen_content:
-                continue
+                seen_content.add(identity)
+                selected.append(result)
 
-            seen_content.add(identity)
-            selected.append(result)
+                if len(selected) >= self.final_limit:
+                    break
 
-            if len(selected) >= self.final_limit:
-                break
-
-        return selected
+            return selected
 
     def close(self) -> None:
-        """Release database resources."""
-        self.keyword_index.close()
-        self.vector_store.close()
+        """Release all open index resources."""
+        try:
+            self.keyword_index.close()
+        finally:
+            try:
+                self.vector_store.close()
+            finally:
+                if self.upload_keyword_index is not None:
+                    self.upload_keyword_index.close()
+
+                if self.upload_vector_store is not None:
+                    self.upload_vector_store.close()
