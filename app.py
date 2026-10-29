@@ -6,7 +6,6 @@ from src.ui.investigation import render_investigation
 
 st.set_page_config(
     page_title="AI Investigation Engine",
-    page_icon="🔎",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -44,7 +43,7 @@ with st.sidebar:
 
 
 documents_tab, investigate_tab = st.tabs(
-    ["📚 Documents", "🔎 Investigate"]
+    ["Documents", "Investigate"]
 )
 
 with documents_tab:
