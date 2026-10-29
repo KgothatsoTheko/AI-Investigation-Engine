@@ -1,4 +1,3 @@
-
 import uuid
 from pathlib import Path
 from typing import Any, Sequence
@@ -22,8 +21,7 @@ class QdrantVectorStore:
 
         self.collection_name = collection_name
 
-        # Persistent local database: data remains after closing
-        # the client and running the script again.
+        # Persistent local database.
         self.client = QdrantClient(
             path=str(database_path)
         )
@@ -38,11 +36,18 @@ class QdrantVectorStore:
             )
         )
 
+    def has_collection(self) -> bool:
+        """Check whether the configured collection exists."""
+        return self.client.collection_exists(
+            collection_name=self.collection_name
+        )
+
     def recreate_collection(self, vector_size: int) -> None:
         """Create a fresh collection with the required vector size."""
-        if self.client.collection_exists(
-            collection_name=self.collection_name
-        ):
+        if vector_size <= 0:
+            raise ValueError("vector_size must be positive.")
+
+        if self.has_collection():
             self.client.delete_collection(
                 collection_name=self.collection_name
             )
@@ -54,6 +59,44 @@ class QdrantVectorStore:
                 distance=models.Distance.COSINE,
             ),
         )
+
+    def ensure_collection(self, vector_size: int) -> None:
+        """
+        Create the collection if missing.
+
+        Existing collections are preserved, and their vector
+        dimensions must match the requested embedding dimension.
+        """
+        if vector_size <= 0:
+            raise ValueError("vector_size must be positive.")
+
+        if not self.has_collection():
+            self.client.create_collection(
+                collection_name=self.collection_name,
+                vectors_config=models.VectorParams(
+                    size=vector_size,
+                    distance=models.Distance.COSINE,
+                ),
+            )
+            return
+
+        info = self.client.get_collection(
+            collection_name=self.collection_name
+        )
+        existing_vectors = info.config.params.vectors
+        existing_size = getattr(existing_vectors, "size", None)
+
+        if existing_size is None:
+            raise ValueError(
+                "The existing collection uses an unsupported "
+                "or named-vector configuration."
+            )
+
+        if existing_size != vector_size:
+            raise ValueError(
+                f"Vector dimension mismatch: collection uses "
+                f"{existing_size}, requested {vector_size}."
+            )
 
     def upsert_batch(
         self,
@@ -70,14 +113,25 @@ class QdrantVectorStore:
         points = []
 
         for chunk, embedding in zip(chunks, embeddings):
+            chunk_id = chunk.get("chunk_id")
+
+            if not chunk_id:
+                raise ValueError(
+                    "Every chunk must have a chunk_id."
+                )
+
             payload = dict(chunk)
+
+            vector = (
+                embedding.tolist()
+                if hasattr(embedding, "tolist")
+                else list(embedding)
+            )
 
             points.append(
                 models.PointStruct(
-                    id=self._point_id(chunk["chunk_id"]),
-                    vector=embedding.tolist()
-                    if hasattr(embedding, "tolist")
-                    else list(embedding),
+                    id=self._point_id(chunk_id),
+                    vector=vector,
                     payload=payload,
                 )
             )
@@ -100,9 +154,11 @@ class QdrantVectorStore:
 
         response = self.client.query_points(
             collection_name=self.collection_name,
-            query=query_vector.tolist()
-            if hasattr(query_vector, "tolist")
-            else list(query_vector),
+            query=(
+                query_vector.tolist()
+                if hasattr(query_vector, "tolist")
+                else list(query_vector)
+            ),
             limit=limit,
             with_payload=True,
         )
@@ -118,55 +174,6 @@ class QdrantVectorStore:
 
         return result.count
 
-    def close(self) -> None:
-        """Release the database client."""
-        self.client.close()
-
-    def has_collection(self) -> bool:
-            """Check whether the configured collection exists."""
-            return self.client.collection_exists(
-                collection_name=self.collection_name
-            )
-
-    def ensure_collection(self, vector_size: int) -> None:
-        """
-        Create the collection if missing.
-
-        Existing collections are preserved. Their vector dimensions
-        must match the requested embedding dimension.
-        """
-        if vector_size <= 0:
-            raise ValueError("vector_size must be positive.")
-
-        if not self.has_collection():
-            self.client.create_collection(
-                collection_name=self.collection_name,
-                vectors_config=models.VectorParams(
-                    size=vector_size,
-                    distance=models.Distance.COSINE,
-                ),
-            )
-            return
-
-        info = self.client.get_collection(
-            collection_name=self.collection_name
-        )
-
-        existing_vectors = info.config.params.vectors
-        existing_size = getattr(existing_vectors, "size", None)
-
-        if existing_size is None:
-            raise ValueError(
-                "The existing collection uses an unsupported "
-                "or named-vector configuration."
-            )
-
-        if existing_size != vector_size:
-            raise ValueError(
-                f"Vector dimension mismatch: collection uses "
-                f"{existing_size}, requested {vector_size}."
-            )
-
     def delete_document_except_chunks(
         self,
         document_id: str,
@@ -175,8 +182,8 @@ class QdrantVectorStore:
         """
         Delete obsolete vectors belonging to a document.
 
-        Chunks listed in keep_chunk_ids are preserved. This method
-        is intended to run after the replacement chunks are upserted.
+        Chunks in keep_chunk_ids are preserved. This method is
+        intended to run after replacement chunks are upserted.
         """
         if not document_id:
             raise ValueError("document_id cannot be empty.")
@@ -235,3 +242,7 @@ class QdrantVectorStore:
             document_id=document_id,
             keep_chunk_ids=set(),
         )
+
+    def close(self) -> None:
+        """Release the database client."""
+        self.client.close()
