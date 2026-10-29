@@ -1,5 +1,6 @@
 # app.py
 import streamlit as st
+from src.ui.document_upload import render_document_upload
 
 st.set_page_config(
     page_title="AI Investigation Engine",
@@ -7,6 +8,8 @@ st.set_page_config(
 )
 
 st.title("AI Investigation Engine")
+
+render_document_upload()
 
 st.write(
     "Investigate questions by connecting evidence "
