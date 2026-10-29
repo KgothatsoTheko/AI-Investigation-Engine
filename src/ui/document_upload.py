@@ -5,7 +5,7 @@ import streamlit as st
 
 from src.ingestion.file_loader import load_document
 from src.storage.upload_store import SQLiteUploadStore
-
+from src.ingestion.upload_indexer import UploadIndexer
 
 PREVIEW_CHAR_LIMIT = 5000
 
@@ -192,3 +192,80 @@ def render_document_upload() -> None:
                         st.rerun()
                     else:
                         st.warning("The document no longer exists.")
+
+                    st.divider()
+
+            st.subheader("Search indexing")
+
+            st.caption(
+                "Index this document to make its content searchable. "
+                "Re-indexing updates its existing indexed content."
+            )
+
+            if st.button(
+                "Index / refresh search index",
+                key=f"index_upload_{selected_id}",
+            ):
+                indexer = None
+
+                try:
+                    with st.spinner(
+                        "Generating embeddings and updating indexes..."
+                    ):
+                        indexer = UploadIndexer(
+                            document_store=store,
+                        )
+
+                        result = indexer.index_document(selected_id)
+
+                    st.success(
+                        f"Indexed {result['chunks_indexed']} chunks."
+                    )
+                    st.json(result)
+
+                except Exception as exc:
+                    st.error(
+                        f"Indexing failed: {type(exc).__name__}: {exc}"
+                    )
+
+                finally:
+                    if indexer is not None:
+                        indexer.close()
+
+            st.caption(
+                "Removing a document from search does not delete "
+                "the saved original."
+            )
+
+            confirm_unindex = st.checkbox(
+                "Confirm removal from search indexes",
+                key=f"confirm_unindex_{selected_id}",
+            )
+
+            if st.button(
+                "Remove from search indexes",
+                key=f"unindex_upload_{selected_id}",
+                disabled=not confirm_unindex,
+            ):
+                indexer = None
+
+                try:
+                    indexer = UploadIndexer(
+                        document_store=store,
+                    )
+
+                    result = indexer.delete_indexed_document(
+                        selected_id
+                    )
+
+                    st.success("Indexed chunks removed.")
+                    st.json(result)
+
+                except Exception as exc:
+                    st.error(
+                        f"Removal failed: {type(exc).__name__}: {exc}"
+                    )
+
+                finally:
+                    if indexer is not None:
+                        indexer.close()            
