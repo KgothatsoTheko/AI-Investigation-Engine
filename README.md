@@ -15,6 +15,10 @@ The application provides two investigation modes:
 
 Users can upload documents, inspect extracted text and metadata, index documents for search, investigate questions, and review the evidence supporting the results.
 
+## Demo
+
+https://www.loom.com/share/04abb120c3e74d42981553c3ef45b5ee
+
 ## Key Features
 
 ### Document Processing
