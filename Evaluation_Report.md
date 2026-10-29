@@ -1,108 +1,96 @@
 # Evaluation Report — AI Investigation Engine
 
-## 1. Purpose
+**Evaluation date:** 29 October 2026  
+**Status:** Partial evaluation; limitations are documented below.
 
-This report records the evaluation performed on the AI Investigation Engine during local development. It separates software test results from the evaluation of answer quality. Passing automated tests demonstrates that tested components behave as expected; it does not, by itself, prove that generated answers are accurate.
+## 1. Objective
 
-## 2. Evaluation Environment
+This evaluation examines whether the AI Investigation Engine retrieves useful evidence, produces answers that match reference answers, and cites evidence identifiers that exist in the retrieved passages. It also records the current comparison of the two chunking strategies.
 
-- **Operating system:** Microsoft Windows
-- **Python:** 3.13
-- **Test framework:** Pytest
-- **User interface:** Streamlit
-- **Embedding model:** `sentence-transformers/all-MiniLM-L6-v2`
-- **Vector search:** Qdrant local storage
-- **Keyword search:** SQLite-backed BM25
-- **LLM integration:** Google Gemini API
-- **Main dataset:** [2WikiMultihopQA](https://huggingface.co/datasets/xanhho/2WikiMultihopQA)
+## 2. Corpus and retrieval setup
 
-## 3. Dataset and Index Preparation
+The research corpus was built from the `xanhho/2WikiMultihopQA` dataset at revision `6ef4eb1bc94ca4a768bb86809fafe777ad795995`.
 
-The corpus-building process used the 2WikiMultihopQA dataset. The recorded corpus build reported:
-
-| Measure | Recorded result |
+| Corpus build measure | Result |
 |---|---:|
-| Dataset examples scanned | 10,878 |
-| Source passages encountered | 108,780 |
-| Unique passages retained | 50,001 |
-| Duplicate passages excluded | 58,779 |
-| Existing Qdrant `investigation_chunks` collection | 67,507 points |
+| Source examples scanned | 10,878 |
+| Source passage occurrences | 108,780 |
+| Unique text records retained | 50,001 |
+| Duplicate occurrences removed | 58,779 |
+| Evaluation seed records | 100 |
+| Questions used for answer evaluation | 40 |
 
-The collection point count and corpus-build count refer to different recorded stages of the project and should not be interpreted as the same measure.
+The retrieval pipeline combines semantic retrieval from Qdrant with keyword retrieval using SQLite BM25. The ranked lists are combined with Reciprocal Rank Fusion (RRF), then duplicate evidence is filtered. The default retriever requests up to 25 candidates and returns up to 12 final evidence chunks for single-pass answer generation.
 
-The evaluation workflow was prepared to cover single-step questions, multi-step questions, questions requiring connections between sources, questions whose answers are absent from the evidence, and questions involving contradictory information.
+## 3. Chunking-strategy comparison
 
-## 4. Automated Software Tests
+Two chunking strategies were built and inspected:
 
-On 29 October 2026, the local test suite completed with the following result:
+| Measure | Fixed-window | Sentence-aware / sentence-grouped |
+|---|---:|---:|
+| Chunks generated | 64,744 | 67,507 |
+| Average words per chunk | 55.33 | 54.54 |
+| Empty chunks found | 0 | 0 |
+| Oversized chunks | 0 | 19 |
 
-| Measure | Result |
+The sentence-aware approach produces more chunks and a slightly lower average chunk size. It also produced 19 oversized chunks in this run. These are structural measurements; they do **not** establish that one strategy has better answer quality. A controlled answer-level comparison is still needed before claiming a winner.
+
+## 4. Answer-quality results
+
+The current 40-question answer evaluation produced the following aggregate metrics:
+
+| Metric | Result |
 |---|---:|
-| Pytest tests passed | 64 |
-| Tests failed | 0 |
-| Test run duration | 11.24 seconds |
+| Exact match | 0.400 |
+| Token F1 | 0.400 |
+| Citation resolution rate | 1.000 |
+| Gold-fact citation precision | 0.925 |
+| Gold-fact citation recall | 0.6488 |
+| Questions answered | 18 / 40 (45%) |
+| Responses marked insufficient evidence | 22 / 40 (55%) |
 
-Command used:
+**Interpretation**
 
-```bash
-python -m pytest -q
-```
+- Citation resolution of 1.000 means the cited chunk identifiers resolved against the evidence supplied to the generator. It does not prove that every citation fully entails its associated claim.
+- Gold-fact citation precision of 0.925 indicates that most evaluated citations aligned with the reference supporting facts.
+- Gold-fact citation recall of 0.6488 indicates that the answer citations covered roughly two-thirds of the reference supporting facts on average.
+- Exact match and token F1 of 0.400 show substantial room for improvement in direct-answer correctness.
+- The evaluation questions have reference answers and supporting facts. An `insufficient_evidence` response therefore counts as a missed answer on this supported-question benchmark; abstention is valuable for genuinely unanswerable questions, but this benchmark alone does not measure that behavior.
 
-The test suite included tests for answer-selection stratification, vector-store collection maintenance, vector dimension validation, deletion of obsolete document chunks, SQLite BM25 deletion and replacement, uploaded-document indexing, re-indexing, and document deletion. The result applies to the test suite and code state at the time of that run.
+The answers were produced across a primary model and a fallback model after provider errors or quota limits. The aggregate results should therefore be treated as results for the configured pipeline, not as a clean head-to-head model comparison.
 
-## 5. Functional Smoke Test: Uploaded PDF
+## 5. Retrieval coverage and error analysis
 
-The document-upload and search-index workflow was tested locally with the assignment PDF, `AI_Investigation_Engine_Task_English.pdf`.
+Average supporting-evidence retrieval recall was approximately **0.649**, and all gold supporting evidence was retrieved for about **35%** of evaluated questions.
 
-| Check | Observed result |
-|---|---|
-| Text extraction | Successful |
-| Extracted text length | 8,404 characters |
-| Chunks indexed | 15 |
-| Vectors upserted | 15 |
-| Keyword chunks added | 15 |
+| Question category | Average retrieval recall |
+|---|---:|
+| Bridge-comparison | 0.458 |
+| Comparison | 0.962 |
+| Compositional | 0.542 |
+| Inference | 0.500 |
 
-A Single-pass RAG query asked: “What are the mandatory requirements for the AI Investigation Engine, and what must be submitted at the end?” After correcting the UI's handling of retrieval results, the displayed answer included the key requirement categories and the five stated deliverables: GitHub Repository, Live Demo, README, Evaluation Report, and AI Usage Report. The retrieved passages displayed source text and chunk/document identifiers.
+The inference category contained only two evaluated questions, so that value is not a reliable estimate for the broader category. Bridge-comparison and compositional questions appear to be the main retrieval weaknesses in this sample. These questions require combining evidence across more than one fact, so missing even one supporting passage can prevent a complete response.
 
-This is a qualitative smoke test using one uploaded document and one question. It is not a statistically meaningful measure of answer accuracy.
+Priority improvements are to increase supporting-passage coverage for multi-hop questions, inspect failed cases individually, and evaluate whether sentence-aware chunking changes retrieval recall rather than comparing chunk counts alone.
 
-## 6. Automated Answer-Quality Evaluation
+## 6. Multi-step versus single-pass comparison
 
-The answer-evaluation command was attempted with a limit of 40 questions:
+The saved `single_vs_multistep_results.jsonl` run contains three error records associated with Gemini API quota/rate-limit failures. It does not provide a valid answer-quality comparison between the two modes.
 
-```bash
-python -m scripts.evaluate_answers --limit 40
-```
+No performance winner is claimed for single-pass RAG versus multi-step investigation. To complete this comparison, rerun both modes against the same questions and corpus with working API quota, or run a separate deterministic retrieval-only comparison that does not require answer-generation calls. Report the number of successfully evaluated examples and preserve failed/error rows separately from successful metric rows.
 
-The run encountered Gemini API quota/rate-limit errors, including HTTP 429 / `RESOURCE_EXHAUSTED` responses. Attempts to use the configured fallback model were also affected by rate limits. Consequently, a complete 40-question result was not obtained from that run.
+## 7. Limitations and reproducibility
 
-For this reason, this report does **not** claim an overall answer-accuracy percentage, retrieval precision/recall score, citation accuracy score, or abstention score. Those metrics should only be reported after a complete evaluation run has finished and its outputs have been reviewed.
+1. **Mixed generation models:** fallback behavior means the 40-question aggregate is not attributable to one model alone.
+2. **Small category samples:** in particular, inference has only two examples.
+3. **Incomplete mode comparison:** quota errors prevented the saved single-pass versus multi-step experiment from producing usable comparative results.
+4. **Deployment corpus availability:** the local build contains 50,001 unique records, but `data/raw/` and `data/processed/` are excluded by `.gitignore`. Unless the corpus indexes are provisioned separately, the public deployment does not contain the full local corpus.
+5. **Persistence:** Streamlit Community Cloud does not guarantee persistence of files created during app runtime. The local SQLite and Qdrant upload stores should not be described as durable cloud persistence.
+6. **Scope of citation metrics:** citation-ID validation tests whether referenced chunk IDs exist; it is not a full semantic entailment or factuality judge.
 
-## 7. Evaluation Summary
+## 8. Overall assessment
 
-| Area | Status | Evidence |
-|---|---|---|
-| Automated software tests | Passed for the recorded run | 64 tests passed |
-| Uploaded PDF text extraction | Passed in smoke test | 8,404 characters extracted |
-| Uploaded-document indexing | Passed in smoke test | 15 chunks, 15 vectors, 15 keyword entries |
-| Single-pass question answering | Basic qualitative check passed | One question returned an answer with relevant source passages |
-| Multi-step investigation | Not formally scored in the recorded results | Requires a completed, reviewed test run |
-| Batch answer-quality evaluation | Inconclusive | 40-question run interrupted by API quota/rate limits |
-| Public deployment and persistence after hosted restarts | Not evaluated here | No deployed environment test is included in these results |
+The project has a working local evaluation pipeline, 40 evaluated answer records, measurable citation metrics, two constructed chunking strategies, and a hybrid semantic/keyword retrieval design with custom RRF ranking. Results show reliable citation-ID resolution but only moderate answer matching and incomplete evidence coverage.
 
-## 8. Limitations and Next Steps
-
-The results support that the tested software components and one local document workflow operated successfully. They do not establish the accuracy of the system across a broad question set.
-
-The next evaluation steps are:
-
-1. Re-run the 40-question answer evaluation when API quota is available and ensure the run completes.
-2. Record answer correctness, evidence relevance, citation validity, and appropriate abstention separately.
-3. Test questions requiring evidence from multiple documents, questions with missing answers, and contradictory evidence.
-4. Run and review the same representative questions in both Single-pass RAG and Multi-step investigation.
-5. Verify the public deployment URL, database connectivity, and data persistence across application restarts before reporting deployment as complete.
-6. Monitor performance with the current local Qdrant collection, which produced a warning because it contains more than 20,000 points.
-
-## 9. Conclusion
-
-The recorded automated test run passed all 64 tests, and a local smoke test successfully extracted and indexed an uploaded PDF and returned a source-backed Single-pass RAG answer. A complete quantitative answer-quality evaluation has not yet been established because the attempted 40-question run was interrupted by API quota/rate limits. The system should therefore be considered functionally tested in the recorded areas, with broader answer-quality and deployment validation still required.
+The evaluation should be considered **partially complete** until the two-configuration comparison succeeds and the deployed corpus/persistence limitations are either resolved or explicitly accepted by the assignment rubric. No missing metric is inferred or presented as a successful result.
