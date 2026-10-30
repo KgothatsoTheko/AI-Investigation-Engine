@@ -1,3 +1,4 @@
+import os
 import uuid
 from pathlib import Path
 from typing import Any, Sequence
@@ -6,7 +7,11 @@ from qdrant_client import QdrantClient, models
 
 
 class QdrantVectorStore:
-    """Store and search embedded text chunks in Qdrant."""
+    """Qdrant vector store using Qdrant Cloud when configured.
+
+    Local development and tests use Qdrant's persistent local mode.
+    Set QDRANT_URL and QDRANT_API_KEY to use Qdrant Cloud.
+    """
 
     def __init__(
         self,
@@ -14,17 +19,20 @@ class QdrantVectorStore:
         collection_name: str = "investigation_chunks",
     ):
         database_path = Path(database_path)
-        database_path.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
+        database_path.parent.mkdir(parents=True, exist_ok=True)
 
         self.collection_name = collection_name
+        self.remote_url = os.getenv("QDRANT_URL", "").strip()
 
-        # Persistent local database.
-        self.client = QdrantClient(
-            path=str(database_path)
-        )
+        if self.remote_url:
+            api_key = os.getenv("QDRANT_API_KEY", "").strip() or None
+            self.client = QdrantClient(
+                url=self.remote_url,
+                api_key=api_key,
+                timeout=60,
+            )
+        else:
+            self.client = QdrantClient(path=str(database_path))
 
     @staticmethod
     def _point_id(chunk_id: str) -> str:
@@ -42,8 +50,24 @@ class QdrantVectorStore:
             collection_name=self.collection_name
         )
 
+    def _ensure_document_id_index(self) -> None:
+        """Create the keyword payload index required for document filters.
+
+        Qdrant Cloud requires a payload index before filtering on
+        document_id. Local Qdrant mode does not require payload indexes.
+        """
+        if not self.remote_url or not self.has_collection():
+            return
+
+        self.client.create_payload_index(
+            collection_name=self.collection_name,
+            field_name="document_id",
+            field_schema=models.PayloadSchemaType.KEYWORD,
+            wait=True,
+        )
+
     def recreate_collection(self, vector_size: int) -> None:
-        """Create a fresh collection with the required vector size."""
+        """Delete and recreate the collection. Use only for intentional resets."""
         if vector_size <= 0:
             raise ValueError("vector_size must be positive.")
 
@@ -59,14 +83,10 @@ class QdrantVectorStore:
                 distance=models.Distance.COSINE,
             ),
         )
+        self._ensure_document_id_index()
 
     def ensure_collection(self, vector_size: int) -> None:
-        """
-        Create the collection if missing.
-
-        Existing collections are preserved, and their vector
-        dimensions must match the requested embedding dimension.
-        """
+        """Create a collection if missing, validate dimensions, and add filter indexes."""
         if vector_size <= 0:
             raise ValueError("vector_size must be positive.")
 
@@ -78,6 +98,7 @@ class QdrantVectorStore:
                     distance=models.Distance.COSINE,
                 ),
             )
+            self._ensure_document_id_index()
             return
 
         info = self.client.get_collection(
@@ -88,15 +109,18 @@ class QdrantVectorStore:
 
         if existing_size is None:
             raise ValueError(
-                "The existing collection uses an unsupported "
-                "or named-vector configuration."
+                "The existing collection uses an unsupported or named-vector configuration."
             )
 
         if existing_size != vector_size:
             raise ValueError(
-                f"Vector dimension mismatch: collection uses "
-                f"{existing_size}, requested {vector_size}."
+                f"Vector dimension mismatch: collection uses {existing_size}, "
+                f"requested {vector_size}."
             )
+
+        # This also repairs an existing Cloud collection that was created
+        # before document_id payload indexing was added.
+        self._ensure_document_id_index()
 
     def upsert_batch(
         self,
@@ -106,33 +130,25 @@ class QdrantVectorStore:
         """Insert or update a batch of embedded chunks."""
         if len(chunks) != len(embeddings):
             raise ValueError(
-                "The number of chunks must match the number "
-                "of embeddings."
+                "The number of chunks must match the number of embeddings."
             )
 
         points = []
-
         for chunk, embedding in zip(chunks, embeddings):
             chunk_id = chunk.get("chunk_id")
-
             if not chunk_id:
-                raise ValueError(
-                    "Every chunk must have a chunk_id."
-                )
-
-            payload = dict(chunk)
+                raise ValueError("Every chunk must have a chunk_id.")
 
             vector = (
                 embedding.tolist()
                 if hasattr(embedding, "tolist")
                 else list(embedding)
             )
-
             points.append(
                 models.PointStruct(
                     id=self._point_id(chunk_id),
                     vector=vector,
-                    payload=payload,
+                    payload=dict(chunk),
                 )
             )
 
@@ -152,17 +168,17 @@ class QdrantVectorStore:
         if limit <= 0:
             raise ValueError("limit must be positive.")
 
+        vector = (
+            query_vector.tolist()
+            if hasattr(query_vector, "tolist")
+            else list(query_vector)
+        )
         response = self.client.query_points(
             collection_name=self.collection_name,
-            query=(
-                query_vector.tolist()
-                if hasattr(query_vector, "tolist")
-                else list(query_vector)
-            ),
+            query=vector,
             limit=limit,
             with_payload=True,
         )
-
         return response.points
 
     def count_points(self) -> int:
@@ -171,25 +187,22 @@ class QdrantVectorStore:
             collection_name=self.collection_name,
             exact=True,
         )
-
-        return result.count
+        return int(result.count)
 
     def delete_document_except_chunks(
         self,
         document_id: str,
         keep_chunk_ids: set[str],
     ) -> int:
-        """
-        Delete obsolete vectors belonging to a document.
-
-        Chunks in keep_chunk_ids are preserved. This method is
-        intended to run after replacement chunks are upserted.
-        """
+        """Delete obsolete vectors for a document while preserving current chunks."""
         if not document_id:
             raise ValueError("document_id cannot be empty.")
 
         if not self.has_collection():
             return 0
+
+        # Existing remote collections may predate the required payload index.
+        self._ensure_document_id_index()
 
         scroll_filter = models.Filter(
             must=[
@@ -215,14 +228,11 @@ class QdrantVectorStore:
 
             for point in points:
                 payload = point.payload or {}
-                chunk_id = payload.get("chunk_id")
-
-                if chunk_id not in keep_chunk_ids:
+                if payload.get("chunk_id") not in keep_chunk_ids:
                     point_ids_to_delete.append(point.id)
 
             if next_offset is None:
                 break
-
             offset = next_offset
 
         if point_ids_to_delete:
@@ -244,5 +254,5 @@ class QdrantVectorStore:
         )
 
     def close(self) -> None:
-        """Release the database client."""
+        """Release the Qdrant client."""
         self.client.close()

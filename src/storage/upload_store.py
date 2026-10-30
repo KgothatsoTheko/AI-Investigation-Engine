@@ -1,30 +1,60 @@
 import json
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DB_PATH = (
-    PROJECT_ROOT
-    / "data"
-    / "processed"
-    / "uploaded_documents.sqlite"
-)
+DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "processed" / "uploaded_documents.sqlite"
 
 
 class SQLiteUploadStore:
-    """Persistent storage for user-uploaded documents."""
+    """Uploaded-document store using SQLite locally or hosted PostgreSQL in deployment.
 
-    def __init__(self, db_path: str | Path | None = None):
-        self.db_path = Path(db_path or DEFAULT_DB_PATH)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+    The historical class name is retained so existing callers and tests remain compatible.
+    Set SUPABASE_DB_URL (recommended) or DATABASE_URL to enable PostgreSQL.
+    """
+
+    def __init__(
+        self,
+        db_path: str | Path | None = None,
+        database_url: str | None = None,
+    ):
+        self.database_url = (
+            database_url
+            or os.getenv("SUPABASE_DB_URL", "").strip()
+            or os.getenv("DATABASE_URL", "").strip()
+        )
+
+        if self.database_url:
+            self.db_path = None
+        else:
+            self.db_path = Path(db_path or DEFAULT_DB_PATH)
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
         self._initialize()
 
     @contextmanager
-    def _connection(self) -> Iterator[sqlite3.Connection]:
+    def _connection(self) -> Iterator:
+        if self.database_url:
+            try:
+                import psycopg
+                from psycopg.rows import dict_row
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Hosted PostgreSQL storage requires psycopg. "
+                    "Install requirements.txt."
+                ) from exc
+
+            with psycopg.connect(
+                self.database_url,
+                row_factory=dict_row,
+            ) as connection:
+                yield connection
+            return
+
         connection = sqlite3.connect(str(self.db_path), timeout=10)
         connection.row_factory = sqlite3.Row
 
@@ -36,6 +66,10 @@ class SQLiteUploadStore:
             raise
         finally:
             connection.close()
+
+    @property
+    def _placeholder(self) -> str:
+        return "%s" if self.database_url else "?"
 
     def _initialize(self) -> None:
         with self._connection() as connection:
@@ -60,17 +94,18 @@ class SQLiteUploadStore:
 
     def save_document(self, document: dict) -> str:
         """Insert a document or update the existing document with its ID."""
-        required_fields = ("document_id", "title", "text")
-
-        for field in required_fields:
+        for field in ("document_id", "title", "text"):
             if not document.get(field):
-                raise ValueError(f"Document is missing required field: {field}")
+                raise ValueError(
+                    f"Document is missing required field: {field}"
+                )
 
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        placeholder = self._placeholder
 
         with self._connection() as connection:
             connection.execute(
-                """
+                f"""
                 INSERT INTO uploaded_documents (
                     document_id,
                     title,
@@ -80,8 +115,7 @@ class SQLiteUploadStore:
                     provenance_json,
                     created_at,
                     updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES ({', '.join([placeholder] * 8)})
                 ON CONFLICT(document_id) DO UPDATE SET
                     title = excluded.title,
                     text = excluded.text,
@@ -105,13 +139,12 @@ class SQLiteUploadStore:
         return document["document_id"]
 
     def get_document(self, document_id: str) -> dict | None:
+        """Return a saved document, or None when it does not exist."""
+        placeholder = self._placeholder
+
         with self._connection() as connection:
             row = connection.execute(
-                """
-                SELECT *
-                FROM uploaded_documents
-                WHERE document_id = ?
-                """,
+                f"SELECT * FROM uploaded_documents WHERE document_id = {placeholder}",
                 (document_id,),
             ).fetchone()
 
@@ -156,23 +189,22 @@ class SQLiteUploadStore:
             for row in rows
         ]
 
-    def delete_document(self, document_id: str) -> bool:
-        """Delete a saved document. Return False when it does not exist."""
-        with self._connection() as connection:
-            cursor = connection.execute(
-                """
-                DELETE FROM uploaded_documents
-                WHERE document_id = ?
-                """,
-                (document_id,),
-            )
-
-            return cursor.rowcount > 0
-
     def count(self) -> int:
+        """Return the total number of saved documents."""
         with self._connection() as connection:
             row = connection.execute(
-                "SELECT COUNT(*) AS total FROM uploaded_documents"
+                "SELECT COUNT(*) AS document_count FROM uploaded_documents"
             ).fetchone()
 
-        return row["total"]
+        return int(row["document_count"])
+
+    def delete_document(self, document_id: str) -> bool:
+        """Delete a saved document. Return False when it does not exist."""
+        placeholder = self._placeholder
+
+        with self._connection() as connection:
+            cursor = connection.execute(
+                f"DELETE FROM uploaded_documents WHERE document_id = {placeholder}",
+                (document_id,),
+            )
+            return cursor.rowcount > 0

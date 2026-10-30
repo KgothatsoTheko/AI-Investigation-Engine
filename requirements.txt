@@ -18,3 +18,6 @@ pydantic
 pypdf
 python-docx
 reportlab
+
+# Optional hosted PostgreSQL persistence and full-text keyword search
+psycopg[binary]>=3.2,<4
