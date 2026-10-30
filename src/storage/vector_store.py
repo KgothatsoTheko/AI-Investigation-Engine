@@ -6,26 +6,53 @@ from typing import Any, Sequence
 from qdrant_client import QdrantClient, models
 
 
-class QdrantVectorStore:
-    """Qdrant vector store using Qdrant Cloud when configured.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_DATA_DIR = (PROJECT_ROOT / "data" / "processed").resolve()
 
-    Local development and tests use Qdrant's persistent local mode.
-    Set QDRANT_URL and QDRANT_API_KEY to use Qdrant Cloud.
+
+class QdrantVectorStore:
+    """Qdrant vector store with safe separation between app and test databases.
+
+    The application's persistent indexes under PROJECT_DATA_DIR use Qdrant
+    Cloud when QDRANT_URL is configured. Temporary/custom paths (including
+    pytest tmp_path directories) always use local Qdrant unless use_remote=True
+    is explicitly supplied.
+
+    This prevents tests that call recreate_collection() from deleting or
+    modifying production collections.
     """
 
     def __init__(
         self,
         database_path: Path | str,
         collection_name: str = "investigation_chunks",
+        use_remote: bool | None = None,
     ):
-        database_path = Path(database_path)
+        database_path = Path(database_path).expanduser().resolve()
         database_path.parent.mkdir(parents=True, exist_ok=True)
 
         self.collection_name = collection_name
-        self.remote_url = os.getenv("QDRANT_URL", "").strip()
+
+        configured_url = os.getenv("QDRANT_URL", "").strip()
+        api_key = os.getenv("QDRANT_API_KEY", "").strip() or None
+
+        if use_remote is None:
+            # Only the app's normal persistent data directory is remote by
+            # default. pytest tmp_path and other custom paths remain local.
+            try:
+                database_path.relative_to(PROJECT_DATA_DIR)
+                use_remote = True
+            except ValueError:
+                use_remote = False
+
+        self.remote_url = configured_url if use_remote else ""
 
         if self.remote_url:
-            api_key = os.getenv("QDRANT_API_KEY", "").strip() or None
+            if not api_key:
+                raise RuntimeError(
+                    "QDRANT_URL is configured for remote storage, but "
+                    "QDRANT_API_KEY is missing."
+                )
             self.client = QdrantClient(
                 url=self.remote_url,
                 api_key=api_key,
@@ -51,11 +78,7 @@ class QdrantVectorStore:
         )
 
     def _ensure_document_id_index(self) -> None:
-        """Create the keyword payload index required for document filters.
-
-        Qdrant Cloud requires a payload index before filtering on
-        document_id. Local Qdrant mode does not require payload indexes.
-        """
+        """Create the keyword payload index required for document filters."""
         if not self.remote_url or not self.has_collection():
             return
 
@@ -67,7 +90,7 @@ class QdrantVectorStore:
         )
 
     def recreate_collection(self, vector_size: int) -> None:
-        """Delete and recreate the collection. Use only for intentional resets."""
+        """Delete and recreate this collection; intended for explicit resets."""
         if vector_size <= 0:
             raise ValueError("vector_size must be positive.")
 
@@ -86,7 +109,7 @@ class QdrantVectorStore:
         self._ensure_document_id_index()
 
     def ensure_collection(self, vector_size: int) -> None:
-        """Create a collection if missing, validate dimensions, and add filter indexes."""
+        """Create a collection if missing, validate dimensions, and index filters."""
         if vector_size <= 0:
             raise ValueError("vector_size must be positive.")
 
@@ -109,7 +132,8 @@ class QdrantVectorStore:
 
         if existing_size is None:
             raise ValueError(
-                "The existing collection uses an unsupported or named-vector configuration."
+                "The existing collection uses an unsupported "
+                "or named-vector configuration."
             )
 
         if existing_size != vector_size:
@@ -118,8 +142,6 @@ class QdrantVectorStore:
                 f"requested {vector_size}."
             )
 
-        # This also repairs an existing Cloud collection that was created
-        # before document_id payload indexing was added.
         self._ensure_document_id_index()
 
     def upsert_batch(
@@ -134,6 +156,7 @@ class QdrantVectorStore:
             )
 
         points = []
+
         for chunk, embedding in zip(chunks, embeddings):
             chunk_id = chunk.get("chunk_id")
             if not chunk_id:
@@ -144,6 +167,7 @@ class QdrantVectorStore:
                 if hasattr(embedding, "tolist")
                 else list(embedding)
             )
+
             points.append(
                 models.PointStruct(
                     id=self._point_id(chunk_id),
@@ -173,6 +197,7 @@ class QdrantVectorStore:
             if hasattr(query_vector, "tolist")
             else list(query_vector)
         )
+
         response = self.client.query_points(
             collection_name=self.collection_name,
             query=vector,
@@ -201,7 +226,6 @@ class QdrantVectorStore:
         if not self.has_collection():
             return 0
 
-        # Existing remote collections may predate the required payload index.
         self._ensure_document_id_index()
 
         scroll_filter = models.Filter(
