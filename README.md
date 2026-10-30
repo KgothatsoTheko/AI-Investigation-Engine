@@ -2,11 +2,19 @@
 
 An AI-powered investigation system that searches, analyzes, and connects evidence across large volumes of documents to generate structured, source-backed answers.
 
-Unlike a basic document chatbot, the AI Investigation Engine combines semantic search, keyword retrieval, evidence analysis, and tool calling to investigate questions that may require multiple pieces of information.
+Unlike a basic document chatbot, the AI Investigation Engine combines semantic search, keyword retrieval, evidence analysis, and tool calling to investigate questions that may require multiple related facts.
+
+## Live Demo and Project
+
+- **Live Application:** https://ai-investigation-engine.streamlit.app/
+- **GitHub Repository:** https://github.com/KgothatsoTheko/AI-Investigation-Engine
+- **Video Demonstration:** https://www.loom.com/share/04abb120c3e74d42981553c3ef45b5ee
+
+**Deployment verification — 29 October 2026:** The live application successfully displayed 67,507 connected vector chunks and 67,507 keyword records, with hosted PostgreSQL and remote Qdrant configured.
 
 ## Overview
 
-The AI Investigation Engine is built to support evidence-based question answering over a large corpus of text records and user-uploaded documents. It aims to retrieve relevant information, preserve source references, and acknowledge when the available evidence is insufficient.
+The AI Investigation Engine supports evidence-based question answering over a large research corpus and user-uploaded documents. It retrieves relevant information, preserves source references, and is designed to acknowledge when the available evidence is insufficient.
 
 The application provides two investigation modes:
 
@@ -15,122 +23,157 @@ The application provides two investigation modes:
 
 Users can upload documents, inspect extracted text and metadata, index documents for search, investigate questions, and review the evidence supporting the results.
 
-## Demo
-
-https://www.loom.com/share/04abb120c3e74d42981553c3ef45b5ee
-
 ## Key Features
 
 ### Document Processing
+
 - Supports TXT, PDF, and DOCX uploads.
 - Extracts document text and metadata.
-- Splits document content into chunks for retrieval.
-- Stores uploaded documents in a persistent SQLite-backed document library.
+- Splits document content into sentence-grouped chunks for retrieval.
+- Stores uploaded document text and metadata in a persistent document library.
 - Supports adding, updating, and deleting saved documents.
 - Supports indexing, re-indexing, and removing documents from search indexes.
 
+The document library stores extracted text, metadata, and associated document information. Original uploaded file binaries are not currently retained for download.
+
 ### Hybrid Search
-- Uses sentence-transformer embeddings for semantic retrieval.
-- Uses SQLite-backed BM25 keyword search.
-- Combines semantic and keyword rankings using reciprocal rank fusion.
-- Searches the main corpus and, when available, the uploaded-document indexes.
+
+- Uses Sentence Transformer embeddings for semantic retrieval.
+- Uses Qdrant for vector storage and similarity search.
+- Uses PostgreSQL full-text search for hosted keyword retrieval.
+- Supports SQLite BM25 as the local keyword-search implementation.
+- Combines semantic and keyword rankings using Reciprocal Rank Fusion (RRF).
+- Searches the main research corpus and uploaded-document indexes.
 - Deduplicates repeated evidence and filters empty text chunks.
 
 ### Evidence-Based Investigation
+
 - Generates structured answers with supporting findings.
 - Displays source passages, document identifiers, and chunk identifiers.
 - Supports targeted follow-up searches in multi-step mode.
-- Provides an insufficient-evidence response when the retrieved evidence does not support an answer.
+- Provides an insufficient-evidence response when retrieved evidence does not support an answer.
 - Includes handling for LLM errors and API quota or rate limits.
 
 ### Evaluation and Testing
+
 - Includes automated unit and integration tests.
 - Provides an answer-evaluation workflow.
-- Supports evaluation across question types, including multi-step questions.
-- Supports investigation of answer quality, evidence relevance, and limitations.
+- Evaluates retrieval quality, answer correctness, and citation quality.
+- Includes measurements for different question categories and chunking strategies.
+- Documents evaluation limitations and unsuccessful API-dependent experiments.
 
 ## Architecture
 
 The system is organized into document ingestion, indexing, retrieval, investigation, generation, and user-interface components.
 
+### Hosted Deployment Architecture
+
 ```text
-                   ┌─────────────────────────┐
-                   │      Streamlit UI       │
-                   └────────────┬────────────┘
-                                │
-                 ┌──────────────┴──────────────┐
-                 │                             │
-          Document Upload               Investigation
-                 │                             │
-          Text Extraction              Investigation Mode
-          and Metadata                  ┌──────┴──────┐
-                 │                      │             │
-          SQLite Document Store     Single-Pass   Multi-Step
-                 │                      │             │
-          Document Chunking             └──────┬──────┘
-                 │                             │
-          Search Indexing               Hybrid Retrieval
-                                 ┌─────────────┴────────────┐
-                                 │                          │
-                          Semantic Search            BM25 Search
-                              Qdrant                    SQLite
-                                 │                          │
-                                 └─────────────┬────────────┘
-                                               │
-                                     Reciprocal Rank Fusion
-                                               │
-                                        Evidence Chunks
-                                               │
-                                        Gemini LLM
-                                               │
-                                    Structured Answer
-                                               │
-                                  Findings and Source Passages
+                  Streamlit Community Cloud
+                            |
+                   AI Investigation Engine
+                            |
+              +-------------+-------------+
+              |                           |
+       Document Workflow             Investigation
+              |                           |
+       Text Extraction             Single-pass / Multi-step
+       and Metadata                        |
+              |                     Hybrid Retrieval
+       Supabase PostgreSQL                 |
+       Document Library             +------+------+
+              |                     |             |
+       Sentence-grouped          Qdrant       Supabase
+       Document Chunks             Cloud       PostgreSQL
+                                   Semantic      Full-text
+                                   Search        Search
+                                      |             |
+                                      +------+------+
+                                             |
+                                  Reciprocal Rank Fusion
+                                             |
+                                      Evidence Chunks
+                                             |
+                                         Gemini API
+                                             |
+                                   Structured Answer
+                                             |
+                                  Findings and Citations
 ```
+
+### Production Storage
+
+| Component | Production service |
+|---|---|
+| Main research corpus vectors | Qdrant Cloud |
+| Uploaded document vectors | Qdrant Cloud |
+| Main corpus keyword index | Supabase PostgreSQL |
+| Uploaded document keyword index | Supabase PostgreSQL |
+| Saved document text and metadata | Supabase PostgreSQL |
+
+Local development supports SQLite and local Qdrant as fallbacks.
 
 ### Main Components
 
 | Component | Responsibility |
 |---|---|
-| Streamlit | User interface for document management and investigations |
-| Sentence Transformers | Generates embeddings for semantic search |
-| Qdrant | Stores and searches document embeddings |
-| SQLite and BM25 | Supports keyword-based retrieval |
-| Reciprocal Rank Fusion | Combines results from multiple retrieval sources |
+| Streamlit | User interface and application hosting |
+| Sentence Transformers | Generates document and query embeddings |
+| Qdrant Cloud | Stores and searches semantic vectors |
+| Supabase PostgreSQL | Persists document data and hosted keyword-search records |
+| PostgreSQL Full-Text Search | Provides hosted keyword retrieval |
+| SQLite BM25 | Supports local keyword retrieval |
+| Reciprocal Rank Fusion | Combines ranked results from different retrieval sources |
 | Gemini API | Supports answer generation and multi-step investigation |
-| SQLite document store | Persists uploaded documents and their metadata |
 | Pytest | Runs automated tests |
 
-The main corpus and uploaded documents use separate search indexes, allowing uploaded content to be managed without replacing the original corpus.
+The main corpus and uploaded documents use separate search indexes, allowing uploaded content to be managed without replacing the original research corpus.
 
 ## Technology Stack
 
 - **Language:** Python
 - **Interface:** Streamlit
+- **Hosting:** Streamlit Community Cloud
 - **Embeddings:** Sentence Transformers
-- **Embedding model:** `sentence-transformers/all-MiniLM-L6-v2`
-- **Vector database:** Qdrant
-- **Keyword retrieval:** SQLite-backed BM25
-- **LLM integration:** Google Gemini API
-- **Document formats:** TXT, PDF, DOCX
-- **Document persistence:** SQLite
+- **Embedding Model:** `sentence-transformers/all-MiniLM-L6-v2`
+- **Vector Database:** Qdrant Cloud
+- **Hosted Keyword Retrieval:** PostgreSQL Full-Text Search
+- **Local Keyword Retrieval:** SQLite BM25
+- **Database:** Supabase PostgreSQL
+- **LLM Integration:** Google Gemini API
+- **Document Formats:** TXT, PDF, DOCX
 - **Testing:** Pytest
 
-## Dataset
+## Dataset and Corpus
 
-The main corpus was built using the [2WikiMultihopQA dataset](https://huggingface.co/datasets/xanhho/2WikiMultihopQA).
+The main research corpus was built using the [2WikiMultihopQA dataset](https://huggingface.co/datasets/xanhho/2WikiMultihopQA).
 
-The corpus-building workflow was configured to collect at least 50,000 unique text passages. The project also maintains evaluation data for testing retrieval and answer generation.
+**Dataset revision:**
 
-The intended evaluation coverage includes:
+`6ef4eb1bc94ca4a768bb86809fafe777ad795995`
 
-- Questions answerable from a single passage.
-- Questions requiring multiple related facts.
-- Questions requiring information to be connected across sources.
-- Questions whose answers are absent from the available evidence.
-- Questions involving contradictory information.
+### Corpus Build Statistics
 
-The purpose of these tests is to evaluate not only whether the system produces an answer, but also whether the answer is supported by the evidence retrieved.
+| Measure | Result |
+|---|---:|
+| Source examples scanned | 10,878 |
+| Source passage occurrences | 108,780 |
+| Unique text records retained | 50,001 |
+| Duplicate occurrences removed | 58,779 |
+| Evaluation seed records | 100 |
+| Sentence-grouped chunks | 67,507 |
+| Fixed-window chunks | 64,744 |
+
+### Hosted Index Verification
+
+| Index | Verified records |
+|---|---:|
+| Qdrant Cloud — main corpus | 67,507 vectors |
+| Supabase PostgreSQL — main corpus | 67,507 keyword records |
+
+These counts were verified following the cloud migrations and through the deployed application's sidebar.
+
+The evaluation dataset includes questions designed to examine single-passage retrieval, multi-hop reasoning, comparison, and inference. Unanswerable and contradictory questions are also part of the broader evaluation objectives, although their full evaluation is not yet complete.
 
 ## Getting Started
 
@@ -139,27 +182,25 @@ The purpose of these tests is to evaluate not only whether the system produces a
 - Python 3.13 or a compatible Python environment.
 - Git.
 - A Google Gemini API key for LLM-powered investigations.
-- Sufficient local disk space for the dataset, indexes, and embedding model.
+- Access to local corpus indexes or the configured hosted storage services.
 
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/KgothatsoTheko/AI-Investigation-Engine
+git clone https://github.com/KgothatsoTheko/AI-Investigation-Engine.git
 cd AI-Investigation-Engine
 ```
 
-Replace the repository URL with your GitHub repository URL.
-
 ### 2. Create a Virtual Environment
 
-**Windows**
+**Windows:**
 
 ```bat
 python -m venv .venv
 .venv\Scripts\activate
 ```
 
-**macOS or Linux**
+**macOS or Linux:**
 
 ```bash
 python -m venv .venv
@@ -175,39 +216,52 @@ python -m pip install -r requirements.txt
 
 ### 4. Configure Environment Variables
 
-Create a `.env` file in the project root:
+Create a `.env` file in the project root for local development:
 
 ```env
 GEMINI_API_KEY=your_gemini_api_key
 GEMINI_MODEL=your_configured_gemini_model
 GEMINI_FALLBACK_MODEL=your_configured_fallback_model
+
+QDRANT_URL=your_qdrant_cloud_endpoint
+QDRANT_API_KEY=your_qdrant_api_key
+
+SUPABASE_DB_URL=your_postgresql_connection_string
 ```
 
-The application also accepts `GOOGLE_API_KEY` as an alternative to `GEMINI_API_KEY`.
+The application also supports:
 
-Use model identifiers supported by your Gemini API configuration. Keep API keys and other secrets out of source control.
+- `GOOGLE_API_KEY` as an alternative to `GEMINI_API_KEY`.
+- `DATABASE_URL` as an alternative to `SUPABASE_DB_URL`.
 
-### 5. Verify the Local Data and Indexes
+Use the exact model identifiers supported by your Gemini API configuration.
 
-The application expects the processed corpus and its search indexes to be available in:
+Keep API keys, database passwords, and connection strings out of source control.
+
+For Streamlit Community Cloud, configure the required values in the application's **Settings → Secrets**.
+
+### 5. Local Data and Indexes
+
+The full dataset and generated local indexes are not committed to the repository.
+
+Local development without hosted services requires the relevant data and indexes under:
 
 ```text
 data/processed/
 ```
 
-The main retriever expects the following index paths:
+The local fallback indexes include:
 
 ```text
 data/processed/
 ├── keyword_index.sqlite
 ├── qdrant_full/
 ├── upload_keyword_index.sqlite
-└── qdrant_uploads/
+├── qdrant_uploads/
+└── uploaded_documents.sqlite
 ```
 
-The uploaded-document index paths are optional. The main corpus indexes must exist before investigations can run.
-
-The full dataset and generated indexes may need to be prepared separately if they are not included in the repository.
+When hosted services are configured, the application uses Qdrant Cloud and PostgreSQL for the corresponding production storage and retrieval operations. The full local corpus indexes do not need to be bundled into the Streamlit deployment.
 
 ### 6. Start the Application
 
@@ -225,31 +279,37 @@ http://localhost:8501
 
 ### Step 1: Add a Document
 
-Open the document management section and upload a TXT, PDF, or DOCX file.
+Open the **Documents** section and upload a TXT, PDF, or DOCX file.
 
-Extract and preview the document to inspect its text and metadata. Save it to the document library when the extracted content looks correct.
+Select **Extract text and preview** to inspect the extracted content and metadata.
+
+When the extracted content looks correct, save the document to the library.
 
 ### Step 2: Index the Document
 
-Select the saved document and use the indexing action to generate embeddings and update the keyword and vector indexes.
+Select a saved document and choose **Index / refresh search index**.
 
-A saved document is not automatically searchable merely because it exists in the document library. It must be indexed first.
+The application generates searchable chunks, embeddings, and keyword-search records.
+
+A saved document is not automatically searchable until it has been indexed.
 
 Re-index an updated document to refresh its searchable content.
 
 ### Step 3: Start an Investigation
 
-Enter a question in the investigation interface and select an investigation mode.
+Open the **Investigate** section, enter a question, and select an investigation mode.
 
 **Single-pass RAG** is suitable for direct questions that can be answered from a focused set of retrieved passages.
 
-**Multi-step investigation** is intended for questions that benefit from several targeted searches, such as questions involving multiple related facts or entities. It can make additional API requests and may consume more quota.
+**Multi-step investigation** is intended for questions that benefit from several targeted searches, such as questions involving multiple related facts or entities. It can make additional API requests and may consume more Gemini quota.
 
 ### Step 4: Review the Result
 
 Review the generated answer, evidence-backed findings, limitations, and retrieved source passages.
 
-Use the displayed chunk and document identifiers to trace claims back to their supporting material. An answer should not be treated as reliable merely because it is fluent; the retrieved evidence must support its claims.
+Use the displayed chunk and document identifiers to trace claims back to their supporting material.
+
+An answer should not be treated as reliable merely because it is fluent; the retrieved evidence must support its claims.
 
 ## Running Tests
 
@@ -259,63 +319,95 @@ Run the automated test suite from the project root:
 python -m pytest -q
 ```
 
-The test suite covers implemented components such as retrieval, index maintenance, investigation behavior, and uploaded-document indexing.
+**Latest recorded local verification — 30 October 2026:**
 
-**Latest recorded local verification:** 64 tests passed. Re-run the suite after code changes to confirm the current state.
+**68 tests passed.**
+
+The test suite covers implemented components such as retrieval, index maintenance, investigation behavior, document storage, uploaded-document indexing, and Qdrant test isolation.
+
+The latest verification was performed with cloud connection environment variables cleared so tests could use isolated local test databases.
 
 ## Answer Evaluation
 
 The project includes an evaluation workflow for testing answer generation against prepared evaluation examples.
 
-For example, to evaluate a sample of 40 questions:
+To evaluate a sample of 40 questions:
 
 ```bash
 python -m scripts.evaluate_answers --limit 40
 ```
 
-This workflow requires the relevant local evaluation data and a working Gemini API configuration. API quotas or rate limits can interrupt evaluation, so incomplete runs should not be interpreted as full evaluation results.
+This workflow requires the relevant local evaluation data and a working Gemini API configuration.
 
-Evaluation results should be reviewed for answer correctness, evidence relevance, citation quality, and appropriate abstention when evidence is insufficient. Record the actual results in the Evaluation Report rather than assuming successful execution proves answer quality.
+API quotas and rate limits can interrupt evaluation. Incomplete runs should not be interpreted as successful comparisons.
+
+### Recorded Answer-Evaluation Results
+
+| Metric | Result |
+|---|---:|
+| Exact Match | 0.400 |
+| Token F1 | 0.400 |
+| Citation Resolution Rate | 1.000 |
+| Gold-Fact Citation Precision | 0.925 |
+| Gold-Fact Citation Recall | 0.6488 |
+| Questions Answered | 18 / 40 |
+| Insufficient-Evidence Responses | 22 / 40 |
+
+The results show reliable citation-ID resolution but leave room for improvement in answer correctness and evidence coverage.
+
+The evaluation used a primary Gemini model and a fallback model after provider errors or quota limits. It is therefore not a controlled comparison between the two models.
+
+The saved single-pass versus multi-step experiment also encountered API quota errors and does not provide a valid performance comparison between those modes.
+
+For the complete measurements, methodology, and limitations, see the [Evaluation Report](Evaluation_Report.md).
 
 ## Design Decisions
 
 ### Hybrid Retrieval
 
-Semantic search can retrieve passages with related meanings even when they use different wording. Keyword search can retrieve exact terms, names, and phrases. Combining both approaches is intended to improve retrieval coverage.
+Semantic search can retrieve passages with related meanings even when they use different wording. Keyword search can retrieve exact terms, names, and phrases.
 
-Reciprocal rank fusion combines the rankings without requiring keyword and semantic search scores to share the same scale.
+Combining both approaches is intended to improve evidence retrieval.
 
-### Local Index Persistence
+Reciprocal Rank Fusion combines rankings without requiring semantic and keyword search scores to share the same scale.
 
-The project uses local Qdrant storage for vector indexes and SQLite for keyword retrieval and document persistence during local development.
+### Cloud and Local Storage
 
-This reduces the infrastructure needed to get started. However, local Qdrant storage has performance limitations for large collections. Production deployment should use an appropriate persistent storage configuration and should be tested at the target corpus size.
+The hosted application uses Qdrant Cloud for semantic vector retrieval and Supabase PostgreSQL for keyword search and saved document data.
+
+Local SQLite and Qdrant storage are retained as development and evaluation fallbacks.
+
+Separating production storage from local test databases also prevents automated tests from accidentally modifying hosted indexes.
 
 ### Separate Investigation Modes
 
-Single-pass RAG provides a simpler retrieval-and-generation workflow. Multi-step investigation introduces a planning stage that can call a retrieval tool to search for additional evidence.
+Single-pass RAG provides a simpler retrieval-and-generation workflow.
 
-Keeping the two modes separate makes their behavior and API usage easier to compare during evaluation.
+Multi-step investigation introduces a planning stage that can call a retrieval tool to search for additional evidence.
+
+Keeping the two modes separate makes their behavior and API usage easier to inspect and evaluate.
 
 ### Evidence and Abstention
 
 The system is designed to present source passages alongside generated answers and to avoid unsupported conclusions when the available evidence is insufficient.
 
-Retrieval quality, source coverage, answer correctness, and contradiction handling remain important areas to validate through the evaluation framework.
+Retrieval quality, source coverage, answer correctness, and contradiction handling remain important areas for continued evaluation.
 
 ## Limitations
 
 - Answer quality depends on the quality and relevance of retrieved passages.
-- Multi-step investigations can require additional Gemini API requests.
+- The 40-question answer evaluation shows moderate answer matching and incomplete evidence coverage.
+- The answer evaluation used a primary model and fallback model, so it is not a controlled model comparison.
+- The saved single-pass versus multi-step answer comparison was interrupted by API quota/rate-limit errors.
+- Broader evaluation of unanswerable and contradictory questions remains incomplete.
+- The document library stores extracted text and metadata; original uploaded file binaries are not currently retained for download.
+- Multi-step investigations may require additional Gemini API requests.
 - External API quotas, rate limits, and service availability may affect investigations and evaluation runs.
-- Local vector storage may become a performance bottleneck as the corpus grows.
-- Contradictory information and missing evidence require careful evaluation; these behaviors should not be assumed correct without test results.
-- Local execution does not itself satisfy the requirement for a publicly accessible deployment.
-- Persistent data on a hosted platform depends on the storage configuration and hosting environment.
 
-## Deployment
+## Reports
 
-**Live Demo:** [Add the public deployment URL here once deployment is available.](https://ai-investigation-engine.streamlit.app/)
+- [Evaluation Report](Evaluation_Report.md)
+- [AI Usage Report](AI_Usage_Report.md)
 
 ---
 
